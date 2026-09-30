@@ -3,16 +3,16 @@ import 'package:stock_screener/logic/indicators.dart';
 import 'package:stock_screener/models/daily_bar.dart';
 
 List<DailyBar> bars(List<double> closes, {List<int>? vols}) => [
-      for (var i = 0; i < closes.length; i++)
-        DailyBar(
-          date: '2026-01-${(i + 1).toString().padLeft(2, '0')}',
-          open: closes[i],
-          high: closes[i],
-          low: closes[i],
-          close: closes[i],
-          volumeLots: vols?[i] ?? 1000,
-        ),
-    ];
+  for (var i = 0; i < closes.length; i++)
+    DailyBar(
+      date: '2026-01-${(i + 1).toString().padLeft(2, '0')}',
+      open: closes[i],
+      high: closes[i],
+      low: closes[i],
+      close: closes[i],
+      volumeLots: vols?[i] ?? 1000,
+    ),
+];
 
 void main() {
   test('sma 算最後 N 筆的平均，資料不夠回傳 null', () {

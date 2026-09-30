@@ -12,7 +12,7 @@ import '../format.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/sync_status.dart';
-import 'stock_detail_screen.dart';
+import 'stock_report_screen.dart';
 
 class TechnicalScreen extends StatefulWidget {
   const TechnicalScreen({super.key});
@@ -56,19 +56,24 @@ class _TechnicalScreenState extends State<TechnicalScreen> {
       padding: const EdgeInsets.all(14),
       children: [
         const DisclaimerCard(
-          text: '這是依技術指標做的機械化篩選（均線、RSI、成交量、新高），不是投資建議、'
+          text:
+              '這是依技術指標做的機械化篩選（均線、RSI、成交量、新高），不是投資建議、'
               '也不是預測——沒有任何指標組合能保證篩出來的股票之後會賺錢，買賣前務必自己再確認。',
         ),
         const SizedBox(height: 8),
         const SyncStatusCard(),
         const SectionHeader(left: '常用條件（點一下套用，套用後還可以自己調整）'),
-        Wrap(spacing: 8, runSpacing: 4, children: [
-          for (final p in kScreenPresets)
-            Tooltip(
-              message: p.description,
-              child: ActionChip(label: Text(p.name), onPressed: () => _update(store, p.criteria)),
-            ),
-        ]),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: [
+            for (final p in kScreenPresets)
+              Tooltip(
+                message: p.description,
+                child: ActionChip(label: Text(p.name), onPressed: () => _update(store, p.criteria)),
+              ),
+          ],
+        ),
         const SizedBox(height: 8),
         Card(
           clipBehavior: Clip.antiAlias,
@@ -103,7 +108,9 @@ class _TechnicalScreenState extends State<TechnicalScreen> {
           if (outcome.results.length > _shown)
             TextButton(
               onPressed: () => setState(() => _shown += _pageSize),
-              child: Text('再顯示 ${_pageSize < outcome.results.length - _shown ? _pageSize : outcome.results.length - _shown} 檔'),
+              child: Text(
+                '再顯示 ${_pageSize < outcome.results.length - _shown ? _pageSize : outcome.results.length - _shown} 檔',
+              ),
             ),
         ],
       ],
@@ -139,87 +146,93 @@ class _CriteriaEditor extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = criteria;
     Widget sw(String title, bool v, ScreenCriteria Function(bool) f) => SwitchListTile(
-          dense: true,
-          contentPadding: EdgeInsets.zero,
-          title: Text(title, style: const TextStyle(fontSize: 13)),
-          value: v,
-          onChanged: (x) => onChanged(f(x)),
-        );
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      sw('多頭排列（收盤 > 5日 > 20日 > 60日線）', c.bullishAlignment, (x) => c.copyWith(bullishAlignment: x)),
-      sw('收盤站上 20 日線（月線）', c.aboveMa20, (x) => c.copyWith(aboveMa20: x)),
-      sw('收盤站上 60 日線（季線）', c.aboveMa60, (x) => c.copyWith(aboveMa60: x)),
-      _Option<int?>(
-        label: '5 日線黃金交叉 20 日線',
-        value: c.goldenCrossWithin,
-        options: const [(null, '不限'), (1, '今天'), (3, '3 天內'), (5, '5 天內'), (10, '10 天內')],
-        onChanged: (v) => onChanged(c.copyWith(goldenCrossWithin: v)),
-      ),
-      _Option<(double?, double?)>(
-        label: 'RSI(14)',
-        value: (c.rsiMin, c.rsiMax),
-        options: const [
-          ((null, null), '不限'),
-          ((null, 30.0), '≤ 30（超賣）'),
-          ((null, 40.0), '≤ 40'),
-          ((40.0, 60.0), '40 ～ 60'),
-          ((60.0, null), '≥ 60'),
-          ((70.0, null), '≥ 70（過熱）'),
-        ],
-        onChanged: (v) => onChanged(c.copyWith(rsiMin: v.$1, rsiMax: v.$2)),
-      ),
-      _Option<int?>(
-        label: '收盤創新高',
-        value: c.breakoutDays,
-        options: const [(null, '不限'), (5, '5 日新高'), (10, '10 日新高'), (20, '20 日新高'), (60, '60 日新高')],
-        onChanged: (v) => onChanged(c.copyWith(breakoutDays: v)),
-      ),
-      _Option<double?>(
-        label: '量比（今天量 ÷ 前 20 日均量）',
-        value: c.minVolRatio,
-        options: const [(null, '不限'), (1.2, '≥ 1.2 倍'), (1.5, '≥ 1.5 倍'), (2.0, '≥ 2 倍'), (3.0, '≥ 3 倍')],
-        onChanged: (v) => onChanged(c.copyWith(minVolRatio: v)),
-      ),
-      _Option<double?>(
-        label: '今日漲跌',
-        value: c.minChangePct,
-        options: const [(null, '不限'), (0.01, '上漲'), (2.0, '漲 ≥ 2%'), (5.0, '漲 ≥ 5%'), (9.0, '漲 ≥ 9%（接近漲停）')],
-        onChanged: (v) => onChanged(c.copyWith(minChangePct: v)),
-      ),
-      _Option<double?>(
-        label: '20 日均量（過濾冷門股）',
-        value: c.minAvgVolLots,
-        options: const [(null, '不限'), (100.0, '≥ 100 張'), (500.0, '≥ 500 張'), (1000.0, '≥ 1,000 張'), (5000.0, '≥ 5,000 張')],
-        onChanged: (v) => onChanged(c.copyWith(minAvgVolLots: v)),
-      ),
-      _Option<(double?, double?)>(
-        label: '股價',
-        value: (c.minPrice, c.maxPrice),
-        options: const [
-          ((null, null), '不限'),
-          ((null, 50.0), '≤ 50 元'),
-          ((null, 100.0), '≤ 100 元'),
-          ((50.0, 300.0), '50 ～ 300 元'),
-          ((100.0, null), '≥ 100 元'),
-          ((500.0, null), '≥ 500 元'),
-        ],
-        onChanged: (v) => onChanged(c.copyWith(minPrice: v.$1, maxPrice: v.$2)),
-      ),
-      _Option<ScreenSort>(
-        label: '排序',
-        value: c.sort,
-        options: [for (final s in ScreenSort.values) (s, s.label)],
-        onChanged: (v) => onChanged(c.copyWith(sort: v)),
-      ),
-      const SizedBox(height: 4),
-      Align(
-        alignment: Alignment.centerRight,
-        child: TextButton(
-          onPressed: () => onChanged(const ScreenCriteria()),
-          child: const Text('全部清除'),
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      title: Text(title, style: const TextStyle(fontSize: 13)),
+      value: v,
+      onChanged: (x) => onChanged(f(x)),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        sw('多頭排列（收盤 > 5日 > 20日 > 60日線）', c.bullishAlignment, (x) => c.copyWith(bullishAlignment: x)),
+        sw('收盤站上 20 日線（月線）', c.aboveMa20, (x) => c.copyWith(aboveMa20: x)),
+        sw('收盤站上 60 日線（季線）', c.aboveMa60, (x) => c.copyWith(aboveMa60: x)),
+        _Option<int?>(
+          label: '5 日線黃金交叉 20 日線',
+          value: c.goldenCrossWithin,
+          options: const [(null, '不限'), (1, '今天'), (3, '3 天內'), (5, '5 天內'), (10, '10 天內')],
+          onChanged: (v) => onChanged(c.copyWith(goldenCrossWithin: v)),
         ),
-      ),
-    ]);
+        _Option<(double?, double?)>(
+          label: 'RSI(14)',
+          value: (c.rsiMin, c.rsiMax),
+          options: const [
+            ((null, null), '不限'),
+            ((null, 30.0), '≤ 30（超賣）'),
+            ((null, 40.0), '≤ 40'),
+            ((40.0, 60.0), '40 ～ 60'),
+            ((60.0, null), '≥ 60'),
+            ((70.0, null), '≥ 70（過熱）'),
+          ],
+          onChanged: (v) => onChanged(c.copyWith(rsiMin: v.$1, rsiMax: v.$2)),
+        ),
+        _Option<int?>(
+          label: '收盤創新高',
+          value: c.breakoutDays,
+          options: const [(null, '不限'), (5, '5 日新高'), (10, '10 日新高'), (20, '20 日新高'), (60, '60 日新高')],
+          onChanged: (v) => onChanged(c.copyWith(breakoutDays: v)),
+        ),
+        _Option<double?>(
+          label: '量比（今天量 ÷ 前 20 日均量）',
+          value: c.minVolRatio,
+          options: const [(null, '不限'), (1.2, '≥ 1.2 倍'), (1.5, '≥ 1.5 倍'), (2.0, '≥ 2 倍'), (3.0, '≥ 3 倍')],
+          onChanged: (v) => onChanged(c.copyWith(minVolRatio: v)),
+        ),
+        _Option<double?>(
+          label: '今日漲跌',
+          value: c.minChangePct,
+          options: const [(null, '不限'), (0.01, '上漲'), (2.0, '漲 ≥ 2%'), (5.0, '漲 ≥ 5%'), (9.0, '漲 ≥ 9%（接近漲停）')],
+          onChanged: (v) => onChanged(c.copyWith(minChangePct: v)),
+        ),
+        _Option<double?>(
+          label: '20 日均量（過濾冷門股）',
+          value: c.minAvgVolLots,
+          options: const [
+            (null, '不限'),
+            (100.0, '≥ 100 張'),
+            (500.0, '≥ 500 張'),
+            (1000.0, '≥ 1,000 張'),
+            (5000.0, '≥ 5,000 張'),
+          ],
+          onChanged: (v) => onChanged(c.copyWith(minAvgVolLots: v)),
+        ),
+        _Option<(double?, double?)>(
+          label: '股價',
+          value: (c.minPrice, c.maxPrice),
+          options: const [
+            ((null, null), '不限'),
+            ((null, 50.0), '≤ 50 元'),
+            ((null, 100.0), '≤ 100 元'),
+            ((50.0, 300.0), '50 ～ 300 元'),
+            ((100.0, null), '≥ 100 元'),
+            ((500.0, null), '≥ 500 元'),
+          ],
+          onChanged: (v) => onChanged(c.copyWith(minPrice: v.$1, maxPrice: v.$2)),
+        ),
+        _Option<ScreenSort>(
+          label: '排序',
+          value: c.sort,
+          options: [for (final s in ScreenSort.values) (s, s.label)],
+          onChanged: (v) => onChanged(c.copyWith(sort: v)),
+        ),
+        const SizedBox(height: 4),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(onPressed: () => onChanged(const ScreenCriteria()), child: const Text('全部清除')),
+        ),
+      ],
+    );
   }
 }
 
@@ -236,27 +249,29 @@ class _Option<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final known = options.any((o) => o.$1 == value);
-    final items = [
-      ...options,
-      if (!known) (value, '自訂'),
-    ];
+    final items = [...options, if (!known) (value, '自訂')];
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(children: [
-        Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
-        DropdownButton<int>(
-          value: items.indexWhere((o) => o.$1 == value),
-          isDense: true,
-          underline: const SizedBox.shrink(),
-          items: [
-            for (var i = 0; i < items.length; i++)
-              DropdownMenuItem(value: i, child: Text(items[i].$2, style: const TextStyle(fontSize: 13))),
-          ],
-          onChanged: (i) {
-            if (i != null) onChanged(items[i].$1);
-          },
-        ),
-      ]),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
+          DropdownButton<int>(
+            value: items.indexWhere((o) => o.$1 == value),
+            isDense: true,
+            underline: const SizedBox.shrink(),
+            items: [
+              for (var i = 0; i < items.length; i++)
+                DropdownMenuItem(
+                  value: i,
+                  child: Text(items[i].$2, style: const TextStyle(fontSize: 13)),
+                ),
+            ],
+            onChanged: (i) {
+              if (i != null) onChanged(items[i].$1);
+            },
+          ),
+        ],
+      ),
     );
   }
 }
@@ -271,13 +286,17 @@ class _ResultRow extends StatelessWidget {
     final ind = result.ind;
     final name = kBuiltinStocksByCode[ind.code]?.name ?? '';
     return InfoRow(
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => StockDetailScreen(code: ind.code, reasons: result.reasons),
-      )),
-      title: Row(children: [
-        if (rank <= 5) RankBadge(rank: rank),
-        Flexible(child: Text('${ind.code} $name', overflow: TextOverflow.ellipsis)),
-      ]),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => StockReportScreen(code: ind.code, extraReasons: result.reasons, extraTitle: '符合自訂條件'),
+        ),
+      ),
+      title: Row(
+        children: [
+          if (rank <= 5) RankBadge(rank: rank),
+          Flexible(child: Text('${ind.code} $name', overflow: TextOverflow.ellipsis)),
+        ],
+      ),
       subtitle: Text(result.reasons.join(' · ')),
       trailingTop: Text(f2(ind.close)),
       trailingBottom: Text(pctTxt(ind.changePct), style: TextStyle(color: changeColor(context, ind.changePct ?? 0))),

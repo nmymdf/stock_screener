@@ -57,11 +57,7 @@ class QuoteService {
           return '${prefix}_$c.tw';
         })
         .join('|');
-    final uri = Uri.https(
-      'mis.twse.com.tw',
-      '/stock/api/getStockInfo.jsp',
-      {'ex_ch': exCh, 'json': '1', 'delay': '0'},
-    );
+    final uri = Uri.https('mis.twse.com.tw', '/stock/api/getStockInfo.jsp', {'ex_ch': exCh, 'json': '1', 'delay': '0'});
     try {
       final res = await _client
           .get(uri, headers: const {'Accept': 'application/json'})
@@ -88,15 +84,17 @@ List<LiveQuote> parseLiveQuotes(Map<String, dynamic> body) {
     final price = parseNum((zStr == '-' ? null : zStr) ?? yStr);
     final prevClose = parseNum(yStr);
     if (price == null || prevClose == null || prevClose == 0) continue;
-    out.add(LiveQuote(
-      code: code,
-      price: price,
-      prevClose: prevClose,
-      open: parseNum(row['o']) ?? price,
-      high: parseNum(row['h']) ?? price,
-      low: parseNum(row['l']) ?? price,
-      volumeLots: (parseNum(row['v']) ?? 0).round(),
-    ));
+    out.add(
+      LiveQuote(
+        code: code,
+        price: price,
+        prevClose: prevClose,
+        open: parseNum(row['o']) ?? price,
+        high: parseNum(row['h']) ?? price,
+        low: parseNum(row['l']) ?? price,
+        volumeLots: (parseNum(row['v']) ?? 0).round(),
+      ),
+    );
   }
   return out;
 }

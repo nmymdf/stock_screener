@@ -3,24 +3,26 @@ import 'package:stock_screener/logic/technical_screen.dart';
 import 'package:stock_screener/models/daily_bar.dart';
 
 List<DailyBar> series(List<double> closes, {int vol = 1000, int? lastVol}) => [
-      for (var i = 0; i < closes.length; i++)
-        DailyBar(
-          date: 'd${i.toString().padLeft(3, '0')}',
-          open: closes[i],
-          high: closes[i],
-          low: closes[i],
-          close: closes[i],
-          volumeLots: i == closes.length - 1 && lastVol != null ? lastVol : vol,
-        ),
-    ];
+  for (var i = 0; i < closes.length; i++)
+    DailyBar(
+      date: 'd${i.toString().padLeft(3, '0')}',
+      open: closes[i],
+      high: closes[i],
+      low: closes[i],
+      close: closes[i],
+      volumeLots: i == closes.length - 1 && lastVol != null ? lastVol : vol,
+    ),
+];
 
 final rising = [for (var i = 0; i < 70; i++) 100.0 + i];
 final falling = [for (var i = 0; i < 70; i++) 200.0 - i];
 
 void main() {
   test('多頭排列只留下一路往上的股票', () {
-    final out = runScreen({'UP': series(rising), 'DOWN': series(falling)},
-        const ScreenCriteria(bullishAlignment: true));
+    final out = runScreen({
+      'UP': series(rising),
+      'DOWN': series(falling),
+    }, const ScreenCriteria(bullishAlignment: true));
     expect(out.results.map((r) => r.code), ['UP']);
     expect(out.results.single.reasons.first, contains('多頭排列'));
   });
@@ -32,10 +34,10 @@ void main() {
   });
 
   test('均量下限過濾掉冷門股', () {
-    final out = runScreen(
-      {'HOT': series(rising, vol: 2000), 'COLD': series(rising, vol: 50)},
-      const ScreenCriteria(minAvgVolLots: 500),
-    );
+    final out = runScreen({
+      'HOT': series(rising, vol: 2000),
+      'COLD': series(rising, vol: 50),
+    }, const ScreenCriteria(minAvgVolLots: 500));
     expect(out.results.map((r) => r.code), ['HOT']);
   });
 

@@ -10,16 +10,15 @@ LiveQuote _q({
   double? high,
   double? low,
   int volumeLots = 0,
-}) =>
-    LiveQuote(
-      code: code,
-      price: price,
-      prevClose: prevClose,
-      open: open ?? price,
-      high: high ?? price,
-      low: low ?? price,
-      volumeLots: volumeLots,
-    );
+}) => LiveQuote(
+  code: code,
+  price: price,
+  prevClose: prevClose,
+  open: open ?? price,
+  high: high ?? price,
+  low: low ?? price,
+  volumeLots: volumeLots,
+);
 
 void main() {
   test('只保留今天上漲的股票，下跌或平盤的不算候選', () {

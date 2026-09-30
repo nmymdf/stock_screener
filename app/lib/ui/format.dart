@@ -16,3 +16,6 @@ String pctTxt(num? v) {
 }
 
 String optF2(num? v) => v == null ? '—' : f2(v);
+
+/// 成交值：一億以上顯示「x.x 億」，否則「x 萬」。
+String valueTxt(double yuan) => yuan >= 1e8 ? '${(yuan / 1e8).toStringAsFixed(1)} 億' : '${f0(yuan / 1e4)} 萬';

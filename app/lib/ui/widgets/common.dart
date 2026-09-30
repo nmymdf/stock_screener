@@ -25,31 +25,41 @@ class DisclaimerCard extends StatelessWidget {
 class StatGrid extends StatelessWidget {
   final List<(String, String, Color?)> stats;
 
-  const StatGrid({super.key, required this.stats});
+  /// 已經放在卡片裡的時候設成 true，不要再包一層卡片。
+  final bool bare;
+
+  const StatGrid({super.key, required this.stats, this.bare = false});
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Wrap(
-          spacing: 16,
-          runSpacing: 12,
-          children: [
-            for (final s in stats)
-              SizedBox(
-                width: 110,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(s.$1, style: Theme.of(context).textTheme.bodySmall),
-                    Text(s.$2, style: TextStyle(fontWeight: FontWeight.w600, color: s.$3)),
-                  ],
+    final grid = _grid(context);
+    return bare
+        ? grid
+        : Card(
+            child: Padding(padding: const EdgeInsets.all(14), child: grid),
+          );
+  }
+
+  Widget _grid(BuildContext context) {
+    return Wrap(
+      spacing: 16,
+      runSpacing: 12,
+      children: [
+        for (final s in stats)
+          SizedBox(
+            width: 110,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(s.$1, style: Theme.of(context).textTheme.bodySmall),
+                Text(
+                  s.$2,
+                  style: TextStyle(fontWeight: FontWeight.w600, color: s.$3),
                 ),
-              ),
-          ],
-        ),
-      ),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }
@@ -63,10 +73,8 @@ class SectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final style = Theme.of(context).textTheme.bodySmall?.copyWith(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-          fontWeight: FontWeight.w500,
-        );
+    final style = Theme.of(context).textTheme.bodySmall
+        ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant, fontWeight: FontWeight.w500);
     return Padding(
       padding: const EdgeInsets.fromLTRB(6, 10, 6, 2),
       child: Row(
@@ -100,10 +108,7 @@ class RowList extends StatelessWidget {
       clipBehavior: Clip.antiAlias,
       child: Column(
         children: [
-          for (var i = 0; i < children.length; i++) ...[
-            if (i > 0) const Divider(height: 1),
-            children[i],
-          ],
+          for (var i = 0; i < children.length; i++) ...[if (i > 0) const Divider(height: 1), children[i]],
         ],
       ),
     );
@@ -118,14 +123,7 @@ class InfoRow extends StatelessWidget {
   final Widget? trailingTop;
   final Widget? trailingBottom;
 
-  const InfoRow({
-    super.key,
-    this.onTap,
-    required this.title,
-    this.subtitle,
-    this.trailingTop,
-    this.trailingBottom,
-  });
+  const InfoRow({super.key, this.onTap, required this.title, this.subtitle, this.trailingTop, this.trailingBottom});
 
   @override
   Widget build(BuildContext context) {
@@ -189,7 +187,10 @@ class RankBadge extends StatelessWidget {
       margin: const EdgeInsets.only(right: 6),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
       decoration: BoxDecoration(color: color.withValues(alpha: .14), borderRadius: BorderRadius.circular(6)),
-      child: Text('#$rank', style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 11)),
+      child: Text(
+        '#$rank',
+        style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 11),
+      ),
     );
   }
 }

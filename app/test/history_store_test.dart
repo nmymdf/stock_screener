@@ -10,27 +10,27 @@ import 'package:stock_screener/logic/technical_screen.dart';
 import 'package:stock_screener/services/history_service.dart';
 
 Map<String, dynamic> twse(String code, double close) => {
-      'stat': 'OK',
-      'tables': [
-        {
-          'fields': ['證券代號', '證券名稱', '成交股數', '開盤價', '最高價', '最低價', '收盤價'],
-          'data': [
-            [code, 'x', '1,000,000', '$close', '$close', '$close', '$close'],
-          ],
-        },
+  'stat': 'OK',
+  'tables': [
+    {
+      'fields': ['證券代號', '證券名稱', '成交股數', '開盤價', '最高價', '最低價', '收盤價'],
+      'data': [
+        [code, 'x', '1,000,000', '$close', '$close', '$close', '$close'],
       ],
-    };
+    },
+  ],
+};
 
 Map<String, dynamic> tpex(String code, double close) => {
-      'tables': [
-        {
-          'fields': ['代號', '名稱', '收盤', '漲跌', '開盤', '最高', '最低', '均價', '成交股數'],
-          'data': [
-            [code, 'y', '$close', '0', '$close', '$close', '$close', '$close', '2,000,000'],
-          ],
-        },
+  'tables': [
+    {
+      'fields': ['代號', '名稱', '收盤', '漲跌', '開盤', '最高', '最低', '均價', '成交股數'],
+      'data': [
+        [code, 'y', '$close', '0', '$close', '$close', '$close', '$close', '2,000,000'],
       ],
-    };
+    },
+  ],
+};
 
 void main() {
   late Directory tmp;
@@ -77,7 +77,10 @@ void main() {
 
     // 重新開一個 store（模擬重開 App），資料和設定都要讀得回來，而且不用重抓
     final before = requests;
-    final reopened = HistoryStore(store: LocalStore(dir: tmp), service: HistoryService(client: client));
+    final reopened = HistoryStore(
+      store: LocalStore(dir: tmp),
+      service: HistoryService(client: client),
+    );
     await reopened.load();
     expect(reopened.lookbackDays, 5);
     expect(reopened.tradingDates, ['2026-09-25', '2026-09-29']);

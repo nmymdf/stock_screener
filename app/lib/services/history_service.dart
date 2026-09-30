@@ -29,30 +29,29 @@ class HistoryService {
   /// 抓 [date]（yyyy-MM-dd）這天上市＋上櫃的收盤行情。兩邊都說「沒資料」
   /// 代表休市；任何一邊連不到就算失敗，下次同步會再重抓。
   Future<DayFetchResult> fetchDay(String date) async {
-    final results = await Future.wait([_fetchTwse(date), _fetchTpex(date)]);
-    final twse = results[0];
-    final tpex = results[1];
+    final (twse, tpex) = await (_fetchTwse(date), _fetchTpex(date)).wait;
     if (twse == null || tpex == null) {
-      return DayFetchResult(DayStatus.failed,
-          message: twse == null ? '連不到證交所（上市）' : '連不到櫃買中心（上櫃）');
+      return DayFetchResult(DayStatus.failed, message: twse == null ? '連不到證交所（上市）' : '連不到櫃買中心（上櫃）');
     }
-    if (twse.isEmpty && tpex.isEmpty) {
-      return DayFetchResult(DayStatus.closed, snapshot: DaySnapshot(date: date, trading: false, bars: const {}));
+    if (twse.bars.isEmpty && tpex.isEmpty) {
+      return DayFetchResult(
+        DayStatus.closed,
+        snapshot: DaySnapshot(date: date, trading: false, bars: const {}),
+      );
     }
     // 只有一邊有資料很少見（多半是其中一邊還沒公布），當作失敗，之後重抓，
     // 免得存下半套的資料之後不會再補。
-    if (twse.isEmpty || tpex.isEmpty) {
-      return DayFetchResult(DayStatus.failed,
-          message: twse.isEmpty ? '證交所（上市）這天還沒有資料' : '櫃買中心（上櫃）這天還沒有資料');
+    if (twse.bars.isEmpty || tpex.isEmpty) {
+      return DayFetchResult(DayStatus.failed, message: twse.bars.isEmpty ? '證交所（上市）這天還沒有資料' : '櫃買中心（上櫃）這天還沒有資料');
     }
     return DayFetchResult(
       DayStatus.ok,
-      snapshot: DaySnapshot(date: date, trading: true, bars: {...tpex, ...twse}),
+      snapshot: DaySnapshot(date: date, trading: true, bars: {...tpex, ...twse.bars}, taiex: twse.taiex),
     );
   }
 
-  /// null = 連線失敗；空 Map = 這天沒有資料（休市）。
-  Future<Map<String, DailyBar>?> _fetchTwse(String date) async {
+  /// null = 連線失敗；bars 是空的 = 這天沒有資料（休市）。
+  Future<({Map<String, DailyBar> bars, double? taiex})?> _fetchTwse(String date) async {
     final uri = Uri.https('www.twse.com.tw', '/rwd/zh/afterTrading/MI_INDEX', {
       'date': date.replaceAll('-', ''),
       'type': 'ALLBUT0999', // 全部（不含權證、牛熊證）
@@ -60,7 +59,7 @@ class HistoryService {
     });
     final body = await _getJson(uri);
     if (body == null) return null;
-    return parseTwseDaily(date, body);
+    return (bars: parseTwseDaily(date, body), taiex: parseTaiex(body));
   }
 
   Future<Map<String, DailyBar>?> _fetchTpex(String date) async {
@@ -91,6 +90,30 @@ class HistoryService {
 /// 解析證交所 MI_INDEX 的回應。新版格式是 `tables: [{fields, data}, ...]`，
 /// 舊版是 `fields9` / `data9` 這種帶編號的鍵，兩種都認。
 Map<String, DailyBar> parseTwseDaily(String date, Map<String, dynamic> body) {
+  for (final (fields, data) in _twseTables(body)) {
+    final cols = _Columns.find(fields);
+    if (cols != null) return cols.parse(date, data);
+  }
+  return {};
+}
+
+/// 從證交所 MI_INDEX 的「價格指數」表找出發行量加權股價指數的收盤。
+double? parseTaiex(Map<String, dynamic> body) {
+  for (final (fields, data) in _twseTables(body)) {
+    final names = [for (final f in fields) f.toString().replaceAll(RegExp(r'\s'), '')];
+    final nameCol = names.indexWhere((n) => n == '指數');
+    final closeCol = names.indexWhere((n) => n.contains('收盤指數'));
+    if (nameCol < 0 || closeCol < 0) continue;
+    for (final row in data) {
+      if (row is List && row.length > closeCol && row[nameCol].toString().contains('發行量加權股價指數')) {
+        return parseNum(row[closeCol]);
+      }
+    }
+  }
+  return null;
+}
+
+List<(List, List)> _twseTables(Map<String, dynamic> body) {
   final tables = <(List, List)>[];
   final t = body['tables'];
   if (t is List) {
@@ -106,11 +129,7 @@ Map<String, DailyBar> parseTwseDaily(String date, Map<String, dynamic> body) {
     final data = body['data${m.group(1)}'];
     if (body[k] is List && data is List) tables.add((body[k] as List, data));
   }
-  for (final (fields, data) in tables) {
-    final cols = _Columns.find(fields);
-    if (cols != null) return cols.parse(date, data);
-  }
-  return {};
+  return tables;
 }
 
 /// 解析櫃買中心上櫃股票行情。新版格式是 `tables: [{fields, data}]`；舊版
@@ -128,13 +147,19 @@ Map<String, DailyBar> parseTpexDaily(String date, Map<String, dynamic> body) {
   }
   final aa = body['aaData'];
   if (aa is List) {
-    return const _Columns(code: 0, close: 2, open: 4, high: 5, low: 6, volume: 8).parse(date, aa);
+    return const _Columns(code: 0, close: 2, open: 4, high: 5, low: 6, volume: 8, change: 3).parse(date, aa);
   }
   return {};
 }
 
 class _Columns {
   final int code, open, high, low, close, volume;
+
+  /// 漲跌價差那一欄（證交所是不帶正負號的價差，正負號另外一欄 [sign]；
+  /// 櫃買是帶正負號的數字）。找不到就是 -1。
+  final int change;
+  final int sign;
+
   const _Columns({
     required this.code,
     required this.open,
@@ -142,6 +167,8 @@ class _Columns {
     required this.low,
     required this.close,
     required this.volume,
+    this.change = -1,
+    this.sign = -1,
   });
 
   static _Columns? find(List fields) {
@@ -154,7 +181,18 @@ class _Columns {
     final close = idx((n) => n.startsWith('收盤'));
     final volume = idx((n) => n.contains('成交股數'));
     if ([code, open, high, low, close, volume].any((i) => i < 0)) return null;
-    return _Columns(code: code, open: open, high: high, low: low, close: close, volume: volume);
+    final sign = idx((n) => n.startsWith('漲跌(+/-)'));
+    final change = sign >= 0 ? idx((n) => n.startsWith('漲跌價差')) : idx((n) => n == '漲跌');
+    return _Columns(
+      code: code,
+      open: open,
+      high: high,
+      low: low,
+      close: close,
+      volume: volume,
+      change: change,
+      sign: sign,
+    );
   }
 
   Map<String, DailyBar> parse(String date, List data) {
@@ -175,8 +213,24 @@ class _Columns {
         low: parseNum(raw[low]) ?? px,
         close: px,
         volumeLots: (shares / 1000).round(),
+        change: _signedChange(raw),
       );
     }
     return out;
+  }
+
+  /// 帶正負號的漲跌價差。證交所的正負號欄是 HTML（例如 `<p style= color:red>+</p>`），
+  /// 出現 'X'（不比價，常見於除權息當天）時正負號不明，回傳 null。
+  double? _signedChange(List raw) {
+    if (change < 0 || change >= raw.length) return null;
+    final mag = parseNum(raw[change]);
+    if (mag == null) return null;
+    if (sign < 0) return mag; // 櫃買：本身就帶正負號
+    if (sign >= raw.length) return null;
+    final s = raw[sign].toString().replaceAll(RegExp(r'<[^>]*>'), '').trim();
+    if (s.contains('+')) return mag.abs();
+    if (s.contains('-')) return -mag.abs();
+    if (mag == 0 && s.isEmpty) return 0;
+    return null;
   }
 }

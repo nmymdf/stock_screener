@@ -11,7 +11,7 @@ import '../../services/quote_service.dart';
 import '../format.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
-import 'stock_detail_screen.dart';
+import 'stock_report_screen.dart';
 
 class RadarScreen extends StatefulWidget {
   const RadarScreen({super.key});
@@ -39,10 +39,7 @@ class _RadarScreenState extends State<RadarScreen> {
       _fetchedCount = 0;
     });
     try {
-      final candidates = {
-        ...kScreenerCandidateCodes,
-        if (_fullMarket) ...kBuiltinStocksByCode.keys,
-      }.toList();
+      final candidates = {...kScreenerCandidateCodes, if (_fullMarket) ...kBuiltinStocksByCode.keys}.toList();
       setState(() => _total = candidates.length);
 
       final quotes = <LiveQuote>[];
@@ -51,7 +48,8 @@ class _RadarScreenState extends State<RadarScreen> {
       for (var i = 0; i < candidates.length; i += chunk) {
         final part = candidates.sublist(i, i + chunk > candidates.length ? candidates.length : i + chunk);
         final sub = <List<String>>[
-          for (var j = 0; j < part.length; j += batch) part.sublist(j, j + batch > part.length ? part.length : j + batch),
+          for (var j = 0; j < part.length; j += batch)
+            part.sublist(j, j + batch > part.length ? part.length : j + batch),
         ];
         final results = await Future.wait(sub.map(_service.fetch));
         for (final r in results) {
@@ -80,7 +78,8 @@ class _RadarScreenState extends State<RadarScreen> {
       padding: const EdgeInsets.all(14),
       children: [
         const DisclaimerCard(
-          text: '這是機械化的排名（今天的漲跌幅、量能、股價位置），不是投資建議、'
+          text:
+              '這是機械化的排名（今天的漲跌幅、量能、股價位置），不是投資建議、'
               '也不是預測——沒有人能保證這些股票之後會賺錢，買賣前務必自己再確認。',
         ),
         const SizedBox(height: 8),
@@ -108,21 +107,24 @@ class _RadarScreenState extends State<RadarScreen> {
         ),
         const SizedBox(height: 10),
         if (_error != null)
-          Padding(padding: const EdgeInsets.all(8), child: Text(_error!, style: const TextStyle(color: Colors.red))),
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Text(_error!, style: const TextStyle(color: Colors.red)),
+          ),
         if (_hits != null) ...[
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Text('成功取得 $_fetchedCount / $_total 檔候選的報價',
-                style: const TextStyle(fontSize: 11, color: Colors.grey)),
+            child: Text(
+              '成功取得 $_fetchedCount / $_total 檔候選的報價',
+              style: const TextStyle(fontSize: 11, color: Colors.grey),
+            ),
           ),
           SectionHeader(left: '今日動能排行（共 ${_hits!.length} 檔上漲候選）', right: _hits!.isEmpty ? null : '前 5 名特別標記'),
           RowList(
             emptyText: _fetchedCount == 0
                 ? '沒有抓到任何報價——可能是非交易時段、或網路連不到證交所，晚點/開盤時間再試一次'
                 : '這次掃描沒有符合條件（今天上漲）的候選股，可能是非交易時段（報價都是昨收）或今天普遍下跌',
-            children: [
-              for (var i = 0; i < _hits!.length; i++) _HitRow(rank: i + 1, hit: _hits![i]),
-            ],
+            children: [for (var i = 0; i < _hits!.length; i++) _HitRow(rank: i + 1, hit: _hits![i])],
           ),
         ],
       ],
@@ -139,16 +141,23 @@ class _HitRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = kBuiltinStocksByCode[hit.code]?.name ?? '';
     return InfoRow(
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => StockDetailScreen(code: hit.code, reasons: hit.reasons),
-      )),
-      title: Row(children: [
-        if (rank <= 5) RankBadge(rank: rank),
-        Flexible(child: Text('${hit.code} $name', overflow: TextOverflow.ellipsis)),
-      ]),
+      onTap: () => Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => StockReportScreen(code: hit.code, extraReasons: hit.reasons, extraTitle: '今日雷達上榜理由'),
+        ),
+      ),
+      title: Row(
+        children: [
+          if (rank <= 5) RankBadge(rank: rank),
+          Flexible(child: Text('${hit.code} $name', overflow: TextOverflow.ellipsis)),
+        ],
+      ),
       subtitle: Text(hit.reasons.join(' · ')),
       trailingTop: Text(f2(hit.quote.price)),
-      trailingBottom: Text(pctTxt(hit.quote.changePct), style: TextStyle(color: changeColor(context, hit.quote.changePct))),
+      trailingBottom: Text(
+        pctTxt(hit.quote.changePct),
+        style: TextStyle(color: changeColor(context, hit.quote.changePct)),
+      ),
     );
   }
 }

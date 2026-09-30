@@ -19,42 +19,51 @@ class SyncStatusCard extends StatelessWidget {
 
     final String summary;
     if (days == 0) {
-      summary = '還沒有歷史資料。第一次要從證交所、櫃買中心抓最近 ${store.lookbackDays} 天的每日收盤行情，'
+      summary =
+          '還沒有歷史資料。第一次要從證交所、櫃買中心抓最近 ${store.lookbackDays} 天的每日收盤行情，'
           '為了不被證交所封鎖，每天間隔幾秒，大約要 ${_eta(missing, store)}。抓到的會存在本機，之後只補新的日子。';
     } else {
-      summary = '已有 $days 個交易日的資料（最新 ${store.latestDate}）'
+      summary =
+          '已有 $days 個交易日的資料（最新 ${store.latestDate}）'
           '${missing > 0 ? '，還有 $missing 天沒抓（約 ${_eta(missing, store)}）' : '，已是最新'}';
     }
 
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(12),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(summary, style: const TextStyle(fontSize: 12)),
-          if (store.syncing) ...[
-            const SizedBox(height: 8),
-            LinearProgressIndicator(value: store.syncTotal == 0 ? null : store.syncDone / store.syncTotal),
-            const SizedBox(height: 4),
-            Row(children: [
-              Expanded(
-                child: Text('同步中… ${store.syncDone} / ${store.syncTotal} 天（可以先用已抓到的資料篩選）',
-                    style: const TextStyle(fontSize: 11)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(summary, style: const TextStyle(fontSize: 12)),
+            if (store.syncing) ...[
+              const SizedBox(height: 8),
+              LinearProgressIndicator(value: store.syncTotal == 0 ? null : store.syncDone / store.syncTotal),
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '同步中… ${store.syncDone} / ${store.syncTotal} 天（可以先用已抓到的資料篩選）',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  ),
+                  TextButton(onPressed: store.cancelSync, child: const Text('停止')),
+                ],
               ),
-              TextButton(onPressed: store.cancelSync, child: const Text('停止')),
-            ]),
-          ] else if (missing > 0) ...[
-            const SizedBox(height: 8),
-            FilledButton.tonalIcon(
-              onPressed: store.sync,
-              icon: const Icon(Icons.download, size: 18),
-              label: Text(days == 0 ? '開始抓歷史資料' : '補抓 $missing 天資料'),
-            ),
+            ] else if (missing > 0) ...[
+              const SizedBox(height: 8),
+              FilledButton.tonalIcon(
+                onPressed: store.sync,
+                icon: const Icon(Icons.download, size: 18),
+                label: Text(days == 0 ? '開始抓歷史資料' : '補抓 $missing 天資料'),
+              ),
+            ],
+            if (store.lastError != null && !store.syncing) ...[
+              const SizedBox(height: 6),
+              Text(store.lastError!, style: TextStyle(fontSize: 11, color: scheme.error)),
+            ],
           ],
-          if (store.lastError != null && !store.syncing) ...[
-            const SizedBox(height: 6),
-            Text(store.lastError!, style: TextStyle(fontSize: 11, color: scheme.error)),
-          ],
-        ]),
+        ),
       ),
     );
   }

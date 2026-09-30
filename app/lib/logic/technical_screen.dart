@@ -14,11 +14,11 @@ const Object _keep = Object();
 
 extension ScreenSortLabel on ScreenSort {
   String get label => switch (this) {
-        ScreenSort.changePct => '今日漲幅',
-        ScreenSort.volRatio => '量比',
-        ScreenSort.return20 => '近 20 日漲幅',
-        ScreenSort.rsi => 'RSI',
-      };
+    ScreenSort.changePct => '今日漲幅',
+    ScreenSort.volRatio => '量比',
+    ScreenSort.return20 => '近 20 日漲幅',
+    ScreenSort.rsi => 'RSI',
+  };
 }
 
 /// 篩選條件。每個條件都是可選的（null / false = 不限制），勾選的條件之間是「而且」。
@@ -100,20 +100,20 @@ class ScreenCriteria {
   }
 
   Map<String, dynamic> toJson() => {
-        'aboveMa20': aboveMa20,
-        'aboveMa60': aboveMa60,
-        'bullishAlignment': bullishAlignment,
-        'goldenCrossWithin': goldenCrossWithin,
-        'rsiMin': rsiMin,
-        'rsiMax': rsiMax,
-        'minVolRatio': minVolRatio,
-        'breakoutDays': breakoutDays,
-        'minChangePct': minChangePct,
-        'minAvgVolLots': minAvgVolLots,
-        'minPrice': minPrice,
-        'maxPrice': maxPrice,
-        'sort': sort.name,
-      };
+    'aboveMa20': aboveMa20,
+    'aboveMa60': aboveMa60,
+    'bullishAlignment': bullishAlignment,
+    'goldenCrossWithin': goldenCrossWithin,
+    'rsiMin': rsiMin,
+    'rsiMax': rsiMax,
+    'minVolRatio': minVolRatio,
+    'breakoutDays': breakoutDays,
+    'minChangePct': minChangePct,
+    'minAvgVolLots': minAvgVolLots,
+    'minPrice': minPrice,
+    'maxPrice': maxPrice,
+    'sort': sort.name,
+  };
 
   static ScreenCriteria fromJson(Map<String, dynamic> j) {
     double? d(String k) => (j[k] as num?)?.toDouble();
@@ -155,16 +155,8 @@ const List<ScreenPreset> kScreenPresets = [
     '收盤創 20 日新高，而且成交量是前 20 日均量的 1.5 倍以上',
     ScreenCriteria(breakoutDays: 20, minVolRatio: 1.5, sort: ScreenSort.volRatio),
   ),
-  ScreenPreset(
-    '黃金交叉',
-    '最近 3 天內 5 日線由下往上穿過 20 日線',
-    ScreenCriteria(goldenCrossWithin: 3, sort: ScreenSort.changePct),
-  ),
-  ScreenPreset(
-    'RSI 超賣',
-    'RSI(14) 低於 30，短線跌深（跌深不代表會反彈，只是列出來）',
-    ScreenCriteria(rsiMax: 30, sort: ScreenSort.rsi),
-  ),
+  ScreenPreset('黃金交叉', '最近 3 天內 5 日線由下往上穿過 20 日線', ScreenCriteria(goldenCrossWithin: 3, sort: ScreenSort.changePct)),
+  ScreenPreset('RSI 超賣', 'RSI(14) 低於 30，短線跌深（跌深不代表會反彈，只是列出來）', ScreenCriteria(rsiMax: 30, sort: ScreenSort.rsi)),
   ScreenPreset(
     '量能爆發',
     '今天上漲，而且成交量是前 20 日均量的 2 倍以上',
@@ -207,12 +199,12 @@ ScreenOutcome runScreen(Map<String, List<DailyBar>> seriesByCode, ScreenCriteria
   }
 
   double key(ScreenResult r) => switch (c.sort) {
-        ScreenSort.changePct => r.ind.changePct ?? double.negativeInfinity,
-        ScreenSort.volRatio => r.ind.volRatio ?? double.negativeInfinity,
-        ScreenSort.return20 => r.ind.return20Pct ?? double.negativeInfinity,
-        // RSI 由低排到高：超賣條件時最低的排最前面
-        ScreenSort.rsi => -(r.ind.rsi14 ?? double.infinity),
-      };
+    ScreenSort.changePct => r.ind.changePct ?? double.negativeInfinity,
+    ScreenSort.volRatio => r.ind.volRatio ?? double.negativeInfinity,
+    ScreenSort.return20 => r.ind.return20Pct ?? double.negativeInfinity,
+    // RSI 由低排到高：超賣條件時最低的排最前面
+    ScreenSort.rsi => -(r.ind.rsi14 ?? double.infinity),
+  };
   out.sort((a, b) => key(b).compareTo(key(a)));
   return ScreenOutcome(out, seriesByCode.length, skipped);
 }

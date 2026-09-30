@@ -21,10 +21,7 @@ Color changeColor(BuildContext context, num n) {
 }
 
 ThemeData buildTheme(Brightness brightness) {
-  final scheme = ColorScheme.fromSeed(
-    seedColor: AppColors.accent,
-    brightness: brightness,
-  );
+  final scheme = ColorScheme.fromSeed(seedColor: AppColors.accent, brightness: brightness);
   return ThemeData(
     useMaterial3: true,
     colorScheme: scheme,
@@ -36,9 +33,7 @@ ThemeData buildTheme(Brightness brightness) {
         side: BorderSide(color: scheme.outlineVariant),
       ),
     ),
-    listTileTheme: const ListTileThemeData(
-      contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-    ),
+    listTileTheme: const ListTileThemeData(contentPadding: EdgeInsets.symmetric(horizontal: 14, vertical: 6)),
     navigationRailTheme: NavigationRailThemeData(
       backgroundColor: scheme.surface,
       selectedIconTheme: IconThemeData(color: scheme.primary),
@@ -51,3 +46,21 @@ ThemeData buildTheme(Brightness brightness) {
     ),
   );
 }
+
+/// 分數的顏色：用主色的深淺表示強弱，不用紅綠（避免跟漲跌色混淆）。
+Color scoreColor(BuildContext context, double? score) {
+  final dark = Theme.of(context).brightness == Brightness.dark;
+  if (score == null) return Theme.of(context).colorScheme.outline;
+  if (score >= 75) return dark ? const Color(0xFF4FD1C5) : const Color(0xFF0B7A6F);
+  if (score >= 60) return dark ? const Color(0xFF7FB7E8) : const Color(0xFF2F6FA8);
+  if (score >= 45) return dark ? const Color(0xFFE8C170) : const Color(0xFFB7860B);
+  return dark ? const Color(0xFFA0A0A0) : const Color(0xFF7A7A7A);
+}
+
+/// 策略 A/B/C/D 的標籤顏色。
+Color strategyColor(String code) => switch (code) {
+  'A' => const Color(0xFF3F51B5),
+  'B' => const Color(0xFF00897B),
+  'C' => const Color(0xFF8E24AA),
+  _ => const Color(0xFF8D6E63),
+};
