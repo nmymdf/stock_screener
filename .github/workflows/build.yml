@@ -1,0 +1,87 @@
+name: 編譯 Windows / Android
+
+# 這個環境沒有 Android SDK、也沒有 Windows，所以編譯交給 GitHub Actions：
+# 每次 push 或手動觸發，就用 GitHub 提供的真正 Windows / Android 環境編譯，
+# 編好的安裝檔會出現在這次執行的 Artifacts 裡，下載下來就能安裝、測試。
+on:
+  push:
+    paths:
+      - "app/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: "3.47.5"
+
+jobs:
+  analyze-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      - run: flutter pub get
+        working-directory: app
+      - run: flutter analyze
+        working-directory: app
+      - run: flutter test
+        working-directory: app
+
+  build-windows:
+    needs: analyze-and-test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      - run: flutter config --enable-windows-desktop
+      - run: flutter pub get
+        working-directory: app
+      - run: flutter build windows --release
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock_screener-windows
+          path: app/build/windows/x64/runner/Release/**
+
+  build-android:
+    needs: analyze-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+      - run: flutter pub get
+        working-directory: app
+      # 有沒有設定簽章金鑰（repo 的 Settings → Secrets 裡的 ANDROID_KEYSTORE_BASE64）
+      # 決定這次編出來的 apk 能不能「以更新的方式」蓋掉舊版安裝、保留資料。
+      # 還沒設定的話就用 debug 金鑰簽——App 照樣能裝、能用，只是每次安裝都要先
+      # 移除舊版（資料會不見）。設定方法看 README「Android 更新保留資料」那段。
+      - name: 解出固定的簽章金鑰（如果有設定）
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore.jks"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore.jks" >> "$GITHUB_ENV"
+          fi
+      - run: flutter build apk --release
+        working-directory: app
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock_screener-android
+          path: app/build/app/outputs/flutter-apk/app-release.apk
