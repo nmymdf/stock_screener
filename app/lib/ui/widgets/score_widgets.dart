@@ -302,13 +302,17 @@ class KvRow extends StatelessWidget {
       children: [
         Row(
           children: [
-            Expanded(child: Text(k, style: const TextStyle(fontSize: 13))),
+            Expanded(flex: 2, child: Text(k, style: const TextStyle(fontSize: 13))),
             const SizedBox(width: 8),
             Flexible(
-              child: Text(
-                v,
-                textAlign: TextAlign.right,
-                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: color),
+              flex: 3,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  v,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: color),
+                ),
               ),
             ),
           ],

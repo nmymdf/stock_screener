@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../data/history_store.dart';
+import '../../data/holdings_store.dart';
 import '../../data/stock_catalog.dart';
 import '../../data/stock_industry.dart';
 import '../../logic/engine/analysis.dart';
@@ -20,6 +21,8 @@ import '../theme.dart';
 import '../widgets/charts.dart';
 import '../widgets/common.dart';
 import '../widgets/score_widgets.dart';
+import 'holding_detail_screen.dart';
+import 'holding_forms.dart';
 import 'risk_settings_screen.dart';
 
 String sizeLabel(RiskSettings r, TradePlan p) {
@@ -58,6 +61,7 @@ class StockReportScreen extends StatelessWidget {
                 SectionCard(title: extraTitle ?? '上榜理由', child: Bullets(extraReasons, BulletKind.good)),
               if (report != null) ...[
                 _Header(r: report),
+                _HoldingAction(code: code, report: report),
                 _Reasons(r: report),
                 for (final h in report.hits) _PlanCard(r: report, h: h, primary: identical(h, report.primary)),
               ] else
@@ -350,6 +354,57 @@ class _IndicatorCard extends StatelessWidget {
           ('量比', avg > 0 ? '${(s.vol[i] / avg).toStringAsFixed(2)} 倍' : '—', null),
           ('布林帶寬分位', ok(bbp) ? '${(bbp * 100).toStringAsFixed(0)}%' : '—', null),
           ('60 日報酬', ok(s.roc(i, 60)) ? pctTxt(s.roc(i, 60)) : '—', null),
+        ],
+      ),
+    );
+  }
+}
+
+/// 「我已進場」：把這檔加入我的持股（有訊號的話帶入停損、目標和推薦理由）；
+/// 已經持有就顯示持股狀態的捷徑。
+class _HoldingAction extends StatelessWidget {
+  final String code;
+  final StockReport report;
+  const _HoldingAction({required this.code, required this.report});
+
+  @override
+  Widget build(BuildContext context) {
+    final holding = context.watch<HoldingsStore>().openFor(code);
+    final h = report.primary ?? (report.hits.isEmpty ? null : report.hits.first);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 6,
+        children: [
+          if (holding == null)
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => AddHoldingPage(
+                    code: code,
+                    plan: h == null
+                        ? null
+                        : PlanPrefill(
+                            strategy: h.hit.strategy,
+                            entry: h.plan.entry,
+                            stop: h.plan.stop,
+                            target: h.plan.target,
+                            reason: h.hit.headline,
+                          ),
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.add_task, size: 18),
+              label: const Text('我已進場（加入持股追蹤）'),
+            )
+          else
+            OutlinedButton.icon(
+              onPressed: () =>
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => HoldingDetailScreen(id: holding.id))),
+              icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
+              label: Text('已持有 ${holding.shares} 股，看持股追蹤'),
+            ),
         ],
       ),
     );

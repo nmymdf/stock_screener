@@ -5,6 +5,7 @@ library;
 import 'package:flutter/material.dart';
 
 import 'screens/backtest_screen.dart';
+import 'screens/holdings_screen.dart';
 import 'screens/industry_screen.dart';
 import 'screens/market_screen.dart';
 import 'screens/recommend_screen.dart';
@@ -17,7 +18,7 @@ class HomeShell extends StatefulWidget {
   static void goTo(BuildContext context, int index) =>
       context.findAncestorStateOfType<_HomeShellState>()?._select(index);
 
-  static const recommend = 0, market = 1, industry = 2, backtest = 3, tools = 4;
+  static const recommend = 0, holdings = 1, market = 2, industry = 3, backtest = 4, tools = 5;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -30,6 +31,7 @@ class _HomeShellState extends State<HomeShell> {
 
   static const _tabs = [
     (Icons.star_outline, Icons.star, '推薦'),
+    (Icons.account_balance_wallet_outlined, Icons.account_balance_wallet, '持股'),
     (Icons.speed_outlined, Icons.speed, '市場'),
     (Icons.category_outlined, Icons.category, '產業'),
     (Icons.science_outlined, Icons.science, '回測'),
@@ -38,9 +40,10 @@ class _HomeShellState extends State<HomeShell> {
 
   Widget _body() => switch (_index) {
     0 => const RecommendScreen(),
-    1 => const MarketScreen(),
-    2 => const IndustryScreen(),
-    3 => const BacktestScreen(),
+    1 => const HoldingsScreen(),
+    2 => const MarketScreen(),
+    3 => const IndustryScreen(),
+    4 => const BacktestScreen(),
     _ => const ToolsScreen(),
   };
 

@@ -209,6 +209,12 @@ class HistoryStore extends ChangeNotifier {
 
   List<DailyBar> seriesOf(String code) => seriesByCode[code] ?? const [];
 
+  /// 沒有還原權息的原始日 K（實際成交價），給持股算真實損益用。
+  List<DailyBar> rawSeriesOf(String code) => [
+    for (final date in tradingDates)
+      if (_days[date]!.bars[code] != null) _days[date]!.bars[code]!,
+  ];
+
   /// 把缺的日期補抓回來，由新到舊抓（最近的資料最有用，中途停掉也能先用）。
   /// 連續失敗 3 次就停下來，多半是沒網路或被證交所暫時擋掉。
   Future<void> sync({DateTime? now}) async {

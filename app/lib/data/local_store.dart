@@ -2,6 +2,7 @@
 /// Windows、Linux、Android 都用同一套 `path_provider` API，不用分平台寫。
 ///
 /// - 設定（篩選條件、歷史天數）存在 [settingsFileName]。
+/// - 持股紀錄存在 `stock_screener_holdings.json`。
 /// - 每日收盤行情一天一個檔案，放在 `history/yyyy-MM-dd.json`，已經抓過的
 ///   交易日不會再抓第二次（過去的收盤行情不會變）。
 library;
@@ -74,6 +75,16 @@ class LocalStore {
   Future<void> deleteDay(String date) async {
     final f = File('${(await _historyDir()).path}/$date.json');
     if (await f.exists()) await f.delete();
+  }
+
+  /// 一般的 JSON 檔（例如持股紀錄），放在資料夾最上層。
+  Future<Map<String, dynamic>?> readNamed(String fileName) async => _readJson(File('${(await _dir()).path}/$fileName'));
+
+  Future<void> writeNamed(String fileName, Map<String, dynamic> json) async {
+    final dir = await _dir();
+    final tmp = File('${dir.path}/$fileName.tmp');
+    await tmp.writeAsString(const JsonEncoder.withIndent('  ').convert(json));
+    await tmp.rename('${dir.path}/$fileName');
   }
 
   Future<Map<String, dynamic>?> _readJson(File f) async {

@@ -3,10 +3,13 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_screener/data/history_store.dart';
+import 'package:stock_screener/data/holdings_store.dart';
 import 'package:stock_screener/data/local_store.dart';
 import 'package:stock_screener/main.dart';
 import 'package:stock_screener/models/daily_bar.dart';
+import 'package:stock_screener/models/holding.dart';
 import 'package:stock_screener/ui/home.dart';
+import 'package:stock_screener/ui/screens/holding_detail_screen.dart';
 import 'package:stock_screener/ui/screens/industry_screen.dart';
 import 'package:stock_screener/ui/screens/risk_settings_screen.dart';
 import 'package:stock_screener/ui/screens/stock_report_screen.dart';
@@ -14,6 +17,39 @@ import 'package:stock_screener/ui/screens/tools_screen.dart';
 import 'package:stock_screener/ui/widgets/charts.dart';
 
 import 'support/synthetic.dart';
+
+Future<HoldingsStore> holdingsIn(WidgetTester tester, Directory dir) async {
+  final h = HoldingsStore(store: LocalStore(dir: dir));
+  await tester.runAsync(h.load);
+  return h;
+}
+
+/// 讓真正的檔案讀寫有機會完成（widget 測試裡的時間是假的）。
+Future<void> settleIo(WidgetTester tester) async {
+  await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 300)));
+  await tester.pumpAndSettle();
+}
+
+/// 260 個交易日的模擬市場，2330 最後一天放量突破。
+Future<(Directory, HistoryStore, List<String>)> seededMarket(WidgetTester tester) async {
+  final dates = tradingDays(260);
+  final dir = await tester.runAsync(() async {
+    final dir = await Directory.systemTemp.createTemp('screener_widget');
+    final local = LocalStore(dir: dir);
+    final series = syntheticMarket(dates, stocks: 90, bias: 0.3);
+    series['2330'] = breakoutStock(dates);
+    for (var d = 0; d < dates.length; d++) {
+      await local.writeDay(
+        dates[d],
+        DaySnapshot(date: dates[d], trading: true, bars: {for (final e in series.entries) e.key: e.value[d]}).toJson(),
+      );
+    }
+    return dir;
+  });
+  final store = HistoryStore(store: LocalStore(dir: dir), useIsolate: false)..lookbackDays = 5000;
+  await tester.runAsync(store.load);
+  return (dir!, store, dates);
+}
 
 void useTallScreen(WidgetTester tester) {
   tester.view.physicalSize = const Size(1400, 4000);
@@ -27,7 +63,7 @@ void main() {
     final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false);
     await tester.runAsync(store.load);
 
-    await tester.pumpWidget(StockScreenerApp(store: store));
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp!)));
     await tester.pump();
     expect(find.text('台股選股系統'), findsOneWidget);
     expect(find.text('開始抓歷史資料'), findsOneWidget);
@@ -46,7 +82,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('清除所有歷史資料'), findsOneWidget);
 
-    await tester.runAsync(() => tmp!.delete(recursive: true));
+    await tester.runAsync(() => tmp.delete(recursive: true));
   });
 
   testWidgets('寬螢幕用側邊選單', (tester) async {
@@ -56,10 +92,10 @@ void main() {
     final tmp = await tester.runAsync(() => Directory.systemTemp.createTemp('screener_widget'));
     final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false);
     await tester.runAsync(store.load);
-    await tester.pumpWidget(StockScreenerApp(store: store));
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp!)));
     await tester.pump();
     expect(find.byType(NavigationRail), findsOneWidget);
-    await tester.runAsync(() => tmp!.delete(recursive: true));
+    await tester.runAsync(() => tmp.delete(recursive: true));
   });
 
   testWidgets('有資料時：推薦、市場、產業、回測、個股報告都畫得出來', (tester) async {
@@ -86,7 +122,7 @@ void main() {
     await tester.runAsync(store.load);
     expect(store.analysis?.latestDate, dates.last);
 
-    await tester.pumpWidget(StockScreenerApp(store: store));
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp!)));
     await tester.pump();
     expect(find.text('今日推薦'), findsOneWidget);
     expect(find.text('通過否決＝推薦'), findsOneWidget);
@@ -121,7 +157,7 @@ void main() {
     expect(store.backtest, isNotNull);
     expect(find.textContaining('結果：'), findsOneWidget);
 
-    await tester.runAsync(() => tmp!.delete(recursive: true));
+    await tester.runAsync(() => tmp.delete(recursive: true));
   });
 
   testWidgets('自訂條件篩選：列出結果，點進去是個股報告', (tester) async {
@@ -142,7 +178,7 @@ void main() {
     final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false)..lookbackDays = 5000;
     await tester.runAsync(store.load);
 
-    await tester.pumpWidget(StockScreenerApp(store: store));
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp!)));
     await tester.pump();
     await tester.tap(find.text('工具'));
     await tester.pump();
@@ -154,7 +190,7 @@ void main() {
     expect(find.text('符合自訂條件'), findsOneWidget);
     expect(find.byType(SimpleChart), findsOneWidget);
 
-    await tester.runAsync(() => tmp!.delete(recursive: true));
+    await tester.runAsync(() => tmp.delete(recursive: true));
   });
 
   testWidgets('手機寬度（390）每個畫面都不會跑版', (tester) async {
@@ -170,17 +206,21 @@ void main() {
       for (var d = 0; d < dates.length; d++) {
         await local.writeDay(
           dates[d],
-          DaySnapshot(date: dates[d], trading: true, bars: {for (final e in series.entries) e.key: e.value[d]}).toJson(),
+          DaySnapshot(
+            date: dates[d],
+            trading: true,
+            bars: {for (final e in series.entries) e.key: e.value[d]},
+          ).toJson(),
         );
       }
       return dir;
     });
     final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false)..lookbackDays = 5000;
     await tester.runAsync(store.load);
-    await tester.pumpWidget(StockScreenerApp(store: store));
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp!)));
     await tester.pump();
     expect(find.byType(NavigationBar), findsOneWidget);
-    for (final tab in ['市場', '產業', '回測', '工具', '推薦']) {
+    for (final tab in ['持股', '市場', '產業', '回測', '工具', '推薦']) {
       await tester.tap(find.text(tab).last);
       await tester.pump();
     }
@@ -202,6 +242,80 @@ void main() {
       nav.push(MaterialPageRoute(builder: (_) => page));
       await tester.pumpAndSettle();
     }
-    await tester.runAsync(() => tmp!.delete(recursive: true));
+    await tester.runAsync(() => tmp.delete(recursive: true));
+  });
+
+  testWidgets('持股：從個股報告「我已進場」加入，持股頁看得到狀態，點進去有停損與紀錄', (tester) async {
+    useTallScreen(tester);
+    final (tmp, store, dates) = await seededMarket(tester);
+    final holdings = await holdingsIn(tester, tmp);
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: holdings));
+    await tester.pump();
+
+    await tester.tap(find.text('持股').first);
+    await tester.pump();
+    expect(find.text('我的持股'), findsOneWidget);
+    expect(find.text('持股追蹤怎麼用'), findsOneWidget);
+
+    Navigator.of(tester.element(find.byType(HomeShell)))
+        .push(MaterialPageRoute(builder: (_) => const StockReportScreen(code: '2330')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('我已進場（加入持股追蹤）'));
+    await tester.pumpAndSettle();
+    expect(find.text('新增持股'), findsOneWidget);
+    expect(find.textContaining('使用推薦時的停損'), findsOneWidget);
+    await tester.tap(find.text('加入我的持股'));
+    await settleIo(tester);
+    expect(holdings.open, hasLength(1));
+    final h = holdings.open.single;
+    expect(h.code, '2330');
+    expect(h.strategy, 'A');
+    expect(h.planStop, isNotNull);
+    expect(find.textContaining('已持有 1000 股'), findsOneWidget);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('2330 台積電'), findsOneWidget);
+
+    await tester.tap(find.text('2330 台積電'));
+    await tester.pumpAndSettle();
+    expect(find.byType(HoldingDetailScreen), findsOneWidget);
+    expect(find.text('停損與目標'), findsOneWidget);
+    expect(find.text('買賣紀錄'), findsOneWidget);
+    expect(find.text('記錄賣出'), findsOneWidget);
+
+    await tester.runAsync(() => tmp.delete(recursive: true));
+  });
+
+  testWidgets('持股：虧損時加碼會出現「禁止向下攤平」，要勾選確認才能記錄', (tester) async {
+    useTallScreen(tester);
+    final (tmp, store, dates) = await seededMarket(tester);
+    final holdings = await holdingsIn(tester, tmp);
+    final last = store.rawSeriesOf('2330').last.close;
+    await tester.runAsync(
+      () => holdings.upsert(
+        Holding(
+          id: 'h1',
+          code: '2330',
+          style: HoldStyle.swing,
+          buys: [BuyLot(dates[dates.length - 5], last * 1.3, 1000)],
+        ),
+      ),
+    );
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: holdings));
+    await tester.pump();
+    Navigator.of(tester.element(find.byType(HomeShell)))
+        .push(MaterialPageRoute(builder: (_) => const HoldingDetailScreen(id: 'h1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('加碼（記錄買進）'));
+    await tester.pumpAndSettle();
+    expect(find.text('⚠ 禁止向下攤平'), findsOneWidget);
+    final save = find.widgetWithText(FilledButton, '記錄加碼');
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pump();
+    expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+
+    await tester.runAsync(() => tmp.delete(recursive: true));
   });
 }
