@@ -125,7 +125,12 @@ README 裡規劃的「個股分析，另一個獨立模組」。技術選股、�
 
   - Android：手機打開上面的網址，點 `stock_screener.apk` 下載後直接安裝
     （第一次要允許「安裝不明來源的 App」）。
-  - Windows：下載 `stock_screener-windows.zip`，解壓縮後執行 `stock_screener.exe`。
+  - Windows（建議）：下載 `stock_screener_setup.exe`，點兩下安裝（不需要管理員權限），
+    會在桌面和開始功能表建立「台股選股」捷徑。更新時下載新的安裝檔再執行一次即可。
+  - Windows（免安裝版）：下載 `stock_screener-windows.zip`，在檔案上按右鍵「解壓縮全部」，
+    執行解壓縮出來的 `stock_screener.exe`。不要在壓縮檔裡直接點 exe，會出現「找不到
+    flutter_windows.dll」。
+  - 歷史資料、持股、設定存在 `%APPDATA%\com.archiekuo\stock_screener`，更新或重新安裝都不會不見。
 
 本機這裡能做、也已經做過的檢查：
 ```bash

@@ -47,6 +47,16 @@ jobs:
         with:
           name: stock_screener-windows
           path: app/build/windows/x64/runner/Release/**
+      # 用 Inno Setup 包成安裝程式：點兩下就裝好、建立捷徑，不用自己解壓縮
+      - name: 製作安裝程式
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=1.${{ github.run_number }}" app\windows\installer\stock_screener.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock_screener-windows-installer
+          path: app/build/installer/stock_screener_setup.exe
 
   build-android:
     needs: analyze-and-test
@@ -103,6 +113,7 @@ jobs:
           set -e
           mkdir out
           cp dist/stock_screener-android/app-release.apk out/stock_screener.apk
+          cp dist/stock_screener-windows-installer/stock_screener_setup.exe out/stock_screener_setup.exe
           (cd dist/stock_screener-windows && zip -qr ../../out/stock_screener-windows.zip .)
           ls -la out
       - uses: softprops/action-gh-release@v2
@@ -113,9 +124,11 @@ jobs:
           make_latest: true
           body: |
             - **Android**：手機下載 `stock_screener.apk` 直接安裝（第一次要允許「安裝不明來源的 App」）。
-            - **Windows**：下載 `stock_screener-windows.zip`，解壓縮後執行 `stock_screener.exe`。
+            - **Windows（建議）**：下載 `stock_screener_setup.exe`，點兩下安裝，會建立桌面捷徑「台股選股」。
+            - **Windows（免安裝版）**：下載 `stock_screener-windows.zip`，在檔案上按右鍵「解壓縮全部」後，執行解壓縮出來的 `stock_screener.exe`（不要在壓縮檔裡直接點）。
 
             這一版的程式碼：${{ github.sha }}
           files: |
+            out/stock_screener_setup.exe
             out/stock_screener.apk
             out/stock_screener-windows.zip
