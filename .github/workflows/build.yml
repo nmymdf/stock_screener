@@ -85,3 +85,37 @@ jobs:
         with:
           name: stock_screener-android
           path: app/build/app/outputs/flutter-apk/app-release.apk
+
+  # 把 apk 和 Windows 版直接放到 GitHub 的「Releases」頁面：手機、電腦都能直接點開下載，
+  # 不用登入 Actions 找 Artifacts，apk 也不會被包在 zip 裡。
+  # 固定網址：https://github.com/nmymdf/stock_screener/releases/latest
+  publish-release:
+    needs: [build-windows, build-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: 整理檔名
+        run: |
+          set -e
+          mkdir out
+          cp dist/stock_screener-android/app-release.apk out/stock_screener.apk
+          (cd dist/stock_screener-windows && zip -qr ../../out/stock_screener-windows.zip .)
+          ls -la out
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: 台股選股 第 ${{ github.run_number }} 版
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            - **Android**：手機下載 `stock_screener.apk` 直接安裝（第一次要允許「安裝不明來源的 App」）。
+            - **Windows**：下載 `stock_screener-windows.zip`，解壓縮後執行 `stock_screener.exe`。
+
+            這一版的程式碼：${{ github.sha }}
+          files: |
+            out/stock_screener.apk
+            out/stock_screener-windows.zip

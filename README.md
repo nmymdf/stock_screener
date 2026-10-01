@@ -100,10 +100,13 @@ README 裡規劃的「個股分析，另一個獨立模組」。技術選股、�
 - 資料解析是照兩邊公開的回應格式寫、用單元測試（假資料）驗證的，**第一次在
   真的裝置上抓資料時請確認一下有沒有抓到**——「資料」頁會顯示抓到幾天、有沒有
   錯誤訊息。
-- `.apk` 和 `.exe` 交給 **GitHub Actions** 編譯：到 repo 的 **Actions** 分頁，
-  找「編譯 Windows / Android」最新一次執行，下面的 **Artifacts** 有
-  `stock_screener-windows`（解壓縮後執行 `stock_screener.exe`）和
-  `stock_screener-android`（`app-release.apk`）。
+- `.apk` 和 `.exe` 交給 **GitHub Actions** 編譯，編好會自動發布到 Releases 頁面：
+
+  **下載網址：https://github.com/nmymdf/stock_screener/releases/latest**
+
+  - Android：手機打開上面的網址，點 `stock_screener.apk` 下載後直接安裝
+    （第一次要允許「安裝不明來源的 App」）。
+  - Windows：下載 `stock_screener-windows.zip`，解壓縮後執行 `stock_screener.exe`。
 
 本機這裡能做、也已經做過的檢查：
 ```bash
