@@ -5,13 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_screener/data/history_store.dart';
 import 'package:stock_screener/data/holdings_store.dart';
 import 'package:stock_screener/data/local_store.dart';
+import 'package:stock_screener/logic/holding_eval.dart';
 import 'package:stock_screener/main.dart';
 import 'package:stock_screener/models/daily_bar.dart';
 import 'package:stock_screener/models/holding.dart';
 import 'package:stock_screener/ui/home.dart';
 import 'package:stock_screener/ui/screens/holding_detail_screen.dart';
 import 'package:stock_screener/ui/screens/industry_screen.dart';
-import 'package:stock_screener/ui/screens/risk_settings_screen.dart';
 import 'package:stock_screener/ui/screens/stock_report_screen.dart';
 import 'package:stock_screener/ui/screens/tools_screen.dart';
 import 'package:stock_screener/ui/widgets/charts.dart';
@@ -217,11 +217,29 @@ void main() {
     });
     final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false)..lookbackDays = 5000;
     await tester.runAsync(store.load);
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp!)));
+    final holdings = await holdingsIn(tester, tmp!);
+    final b = store.rawSeriesOf('2330');
+    await tester.runAsync(
+      () => holdings.upsert(
+        Holding(
+          id: 'p1',
+          code: '2330',
+          style: HoldStyle.short,
+          buys: [BuyLot(b[b.length - 25].date, b[b.length - 25].close, 2000)],
+          strategy: 'B',
+          duration: 1,
+        ),
+      ),
+    );
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: holdings));
     await tester.pump();
     expect(find.byType(NavigationBar), findsOneWidget);
     for (final tab in ['持股', '市場', '產業', '回測', '工具', '推薦']) {
       await tester.tap(find.text(tab).last);
+      await tester.pump();
+    }
+    for (final mode in ['觀察池', '被否決', '推薦']) {
+      await tester.tap(find.textContaining(mode).first);
       await tester.pump();
     }
     await tester.tap(find.text('回測').last);
@@ -236,8 +254,8 @@ void main() {
     final nav = Navigator.of(tester.element(find.byType(HomeShell, skipOffstage: false)));
     for (final page in <Widget>[
       const MethodScreen(),
-      const RiskSettingsScreen(),
       IndustryDetailScreen(name: store.analysis!.industries.first.name),
+      const HoldingDetailScreen(id: 'p1'),
     ]) {
       nav.push(MaterialPageRoute(builder: (_) => page));
       await tester.pumpAndSettle();
@@ -275,12 +293,14 @@ void main() {
 
     await tester.pageBack();
     await tester.pumpAndSettle();
-    expect(find.text('2330 台積電'), findsOneWidget);
+    expect(find.text('今日摘要'), findsOneWidget);
+    // 今日摘要裡列一次、持股卡片一次
+    expect(find.text('2330 台積電'), findsNWidgets(2));
 
-    await tester.tap(find.text('2330 台積電'));
+    await tester.tap(find.text('2330 台積電').last);
     await tester.pumpAndSettle();
     expect(find.byType(HoldingDetailScreen), findsOneWidget);
-    expect(find.text('停損與目標'), findsOneWidget);
+    expect(find.text('成本、損益、停損'), findsOneWidget);
     expect(find.text('買賣紀錄'), findsOneWidget);
     expect(find.text('記錄賣出'), findsOneWidget);
 
@@ -315,6 +335,50 @@ void main() {
     await tester.tap(find.byType(CheckboxListTile));
     await tester.pump();
     expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+
+    await tester.runAsync(() => tmp.delete(recursive: true));
+  });
+
+  testWidgets('持股詳細：明日劇本、持有理由、加碼時機、每日追蹤紀錄都看得到', (tester) async {
+    useTallScreen(tester);
+    final (tmp, store, dates) = await seededMarket(tester);
+    final holdings = await holdingsIn(tester, tmp);
+    final bars = store.rawSeriesOf('2330');
+    final buy = bars[bars.length - 30];
+    await tester.runAsync(
+      () => holdings.upsert(
+        Holding(
+          id: 'h2',
+          code: '2330',
+          style: HoldStyle.swing,
+          buys: [BuyLot(buy.date, buy.close, 1000)],
+          strategy: 'A',
+          opportunity: '波段機會',
+          duration: 2,
+          confidence: '中',
+          thesis: const ['整理後放量突破'],
+        ),
+      ),
+    );
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: holdings));
+    await tester.pump();
+    Navigator.of(tester.element(find.byType(HomeShell)))
+        .push(MaterialPageRoute(builder: (_) => const HoldingDetailScreen(id: 'h2')));
+    await tester.pumpAndSettle();
+    final e = evaluateHolding(
+      holdings.byId('h2')!,
+      adjusted: store.seriesOf('2330'),
+      raw: bars,
+      regimeByDate: store.analysis!.regimeByDate,
+      taiex: store.taiexByDate,
+    );
+    expect(e.log, isNotEmpty);
+    expect(find.text('持有理由還成立嗎'), findsOneWidget);
+    expect(find.textContaining('每日追蹤紀錄'), findsOneWidget);
+    expect(find.text(e.log.last.date), findsWidgets);
+    if (e.scenario.isNotEmpty) expect(find.text('明日劇本'), findsOneWidget);
+    if (!holdings.byId('h2')!.closed && e.addOnPlan.isNotEmpty) expect(find.text('可能的加碼時機'), findsOneWidget);
+    expect(find.text('作者: ArchieKUO'), findsOneWidget);
 
     await tester.runAsync(() => tmp.delete(recursive: true));
   });

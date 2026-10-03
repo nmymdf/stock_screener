@@ -2,6 +2,7 @@
 /// 畫面透過 provider 監聽這個物件，資料一變動畫面就會自動更新。
 library;
 
+import 'dart:async';
 import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
@@ -9,7 +10,6 @@ import 'package:flutter/foundation.dart';
 import '../logic/adjust.dart';
 import '../logic/engine/analysis.dart';
 import '../logic/engine/backtest.dart';
-import '../logic/risk.dart';
 import '../logic/technical_screen.dart';
 import '../models/daily_bar.dart';
 import '../services/history_service.dart';
@@ -45,13 +45,35 @@ class HistoryStore extends ChangeNotifier {
   /// 分析要不要放到背景 isolate 跑（測試時關掉，比較好控制）。
   final bool useIsolate;
 
+  /// 打開 App 時自動補抓缺的日期，App 開著時每 10 分鐘檢查一次
+  /// （台北時間 15:00 以後就會去抓當天收盤）。第一次下載仍然要手動按。
+  final bool autoSync;
+  Timer? _autoTimer;
+
   HistoryStore({
     LocalStore? store,
     HistoryService? service,
     this.requestGap = const Duration(seconds: 3),
     this.useIsolate = true,
+    this.autoSync = false,
   }) : _store = store ?? LocalStore(),
        _service = service ?? HistoryService();
+
+  /// 最近一次自動同步的時間（顯示「已自動更新」用）。
+  DateTime? lastAutoSync;
+
+  void _maybeAutoSync() {
+    if (syncing || tradingDates.isEmpty) return;
+    if (missingDates().isEmpty) return;
+    lastAutoSync = DateTime.now();
+    sync();
+  }
+
+  @override
+  void dispose() {
+    _autoTimer?.cancel();
+    super.dispose();
+  }
 
   final Map<String, DaySnapshot> _days = {};
   Map<String, List<DailyBar>>? _seriesCache;
@@ -68,7 +90,6 @@ class HistoryStore extends ChangeNotifier {
   /// 都需要一年左右的資料。天數少也能用，只是那些指標會顯示「資料不足」。
   int lookbackDays = 400;
   ScreenCriteria criteria = kScreenPresets.first.criteria;
-  RiskSettings risk = const RiskSettings();
 
   AnalysisResult? analysis;
   bool analyzing = false;
@@ -104,8 +125,6 @@ class HistoryStore extends ChangeNotifier {
         lookbackDays = (s['lookbackDays'] as num?)?.round() ?? lookbackDays;
         final c = s['criteria'];
         if (c is Map<String, dynamic>) criteria = ScreenCriteria.fromJson(c);
-        final r = s['risk'];
-        if (r is Map<String, dynamic>) risk = RiskSettings.fromJson(r);
       }
       for (final j in await _store.readAllDays()) {
         final snap = DaySnapshot.fromJson(j);
@@ -118,16 +137,13 @@ class HistoryStore extends ChangeNotifier {
     loaded = true;
     notifyListeners();
     refreshAnalysis();
+    if (autoSync) {
+      _maybeAutoSync();
+      _autoTimer = Timer.periodic(const Duration(minutes: 10), (_) => _maybeAutoSync());
+    }
   }
 
-  Future<void> _saveSettings() =>
-      _store.writeSettings({'lookbackDays': lookbackDays, 'criteria': criteria.toJson(), 'risk': risk.toJson()});
-
-  Future<void> setRisk(RiskSettings r) async {
-    risk = r;
-    notifyListeners();
-    await _saveSettings();
-  }
+  Future<void> _saveSettings() => _store.writeSettings({'lookbackDays': lookbackDays, 'criteria': criteria.toJson()});
 
   void _dataChanged() {
     _dataVersion++;
@@ -228,6 +244,8 @@ class HistoryStore extends ChangeNotifier {
     notifyListeners();
 
     var consecutiveFailures = 0;
+    final nowT = now ?? taipeiNow();
+    final todayStr = ymd(nowT);
     try {
       for (var i = 0; i < todo.length; i++) {
         if (_cancel) break;
@@ -244,6 +262,9 @@ class HistoryStore extends ChangeNotifier {
                 '證交所對太密集的請求會暫時封鎖。';
             break;
           }
+        } else if (r.status == DayStatus.closed && date == todayStr && nowT.hour < 20) {
+          // 平日下午「兩邊都沒資料」多半是今天的收盤還沒公布，不是休市：先不要記成休市，晚點再抓。
+          lastError = '今天（$date）的收盤資料還沒公布，晚一點會再自動抓';
         } else {
           consecutiveFailures = 0;
           final snap = r.snapshot!;

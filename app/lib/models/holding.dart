@@ -12,6 +12,14 @@ extension HoldStyleInfo on HoldStyle {
     HoldStyle.custom => '自己設定',
   };
 
+  /// 對應的持有期間等級（自己設定沒有）。
+  int? get durationClass => switch (this) {
+    HoldStyle.short => 1,
+    HoldStyle.swing => 2,
+    HoldStyle.long => 3,
+    HoldStyle.custom => null,
+  };
+
   String get period => switch (this) {
     HoldStyle.short => '1～3 週',
     HoldStyle.swing => '1～3 個月',
@@ -79,6 +87,13 @@ class Holding {
   final String? reason;
   final String? note;
 
+  /// 買進當下的判斷（最終版 §14 Thesis Lifecycle 的 Original Thesis）：
+  /// 機會類型、預估持有期間 D1～D3 與信心度、主要理由。
+  final String? opportunity;
+  final int? duration;
+  final String? confidence;
+  final List<String> thesis;
+
   const Holding({
     required this.id,
     required this.code,
@@ -92,6 +107,10 @@ class Holding {
     this.planTarget,
     this.reason,
     this.note,
+    this.opportunity,
+    this.duration,
+    this.confidence,
+    this.thesis = const [],
   });
 
   int get boughtShares => buys.fold(0, (a, b) => a + b.shares);
@@ -105,6 +124,11 @@ class Holding {
     if (n == 0) return 0;
     return buys.fold(0.0, (a, b) => a + b.price * b.shares) / n;
   }
+
+  /// 某一天收盤時持有的股數。
+  int sharesAt(String date) =>
+      buys.where((b) => b.date.compareTo(date) <= 0).fold(0, (a, b) => a + b.shares) -
+      sells.where((s) => s.date.compareTo(date) <= 0).fold(0, (a, b) => a + b.shares);
 
   String get firstBuyDate => (buys.map((b) => b.date).toList()..sort()).first;
   String? get lastSellDate => sells.isEmpty ? null : (sells.map((s) => s.date).toList()..sort()).last;
@@ -129,6 +153,10 @@ class Holding {
     planTarget: planTarget,
     reason: reason,
     note: identical(note, _keep) ? this.note : note as String?,
+    opportunity: opportunity,
+    duration: duration,
+    confidence: confidence,
+    thesis: thesis,
   );
 
   Map<String, dynamic> toJson() => {
@@ -144,6 +172,10 @@ class Holding {
     'planTarget': ?planTarget,
     'reason': ?reason,
     'note': ?note,
+    'opportunity': ?opportunity,
+    'duration': ?duration,
+    'confidence': ?confidence,
+    if (thesis.isNotEmpty) 'thesis': thesis,
   };
 
   static Holding fromJson(Map<String, dynamic> j) {
@@ -161,6 +193,10 @@ class Holding {
       planTarget: d('planTarget'),
       reason: j['reason'] as String?,
       note: j['note'] as String?,
+      opportunity: j['opportunity'] as String?,
+      duration: (j['duration'] as num?)?.round(),
+      confidence: j['confidence'] as String?,
+      thesis: [for (final x in (j['thesis'] as List? ?? const [])) x as String],
     );
   }
 }

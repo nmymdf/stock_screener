@@ -6,11 +6,14 @@
 library;
 
 import 'dart:math' as math;
+import 'dart:typed_data';
 
 import '../../data/stock_catalog.dart';
 import '../../data/stock_industry.dart';
 import '../../models/daily_bar.dart';
 import '../ta.dart';
+import 'backtest.dart';
+import 'horizon.dart';
 import 'industry_engine.dart';
 import 'market_engine.dart';
 import 'scoring.dart';
@@ -50,6 +53,15 @@ class StockReport {
   final List<String> vetoes; // 個股層級的一票否決
   final List<String> warnings;
   final List<String> positives;
+  final bool liquid;
+
+  /// 短中長交叉分析（最終版 §02～§04）。
+  final HorizonScore short, medium, long;
+  final PvReading pv;
+  final Opportunity opportunity;
+  final DurationEstimate duration;
+  final List<String> triggers; // 還沒訊號時，什麼情況會變成可以買
+  final CalStat? calibration; // 同類訊號的歷史統計
 
   const StockReport({
     required this.code,
@@ -70,6 +82,15 @@ class StockReport {
     required this.vetoes,
     required this.warnings,
     required this.positives,
+    required this.liquid,
+    required this.short,
+    required this.medium,
+    required this.long,
+    required this.pv,
+    required this.opportunity,
+    required this.duration,
+    required this.triggers,
+    this.calibration,
   });
 
   HitResult? get primary {
@@ -103,6 +124,7 @@ class AnalysisResult {
   final List<IndustryReport> industries;
   final List<StockReport> stocks; // 今天有交易的全部股票
   final Funnel funnel;
+  final Calibration calibration;
 
   const AnalysisResult({
     required this.latestDate,
@@ -111,6 +133,7 @@ class AnalysisResult {
     required this.industries,
     required this.stocks,
     required this.funnel,
+    this.calibration = Calibration.empty,
   });
 
   static const empty = AnalysisResult(
@@ -121,6 +144,33 @@ class AnalysisResult {
     stocks: [],
     funnel: Funnel(0, 0, 0, 0),
   );
+
+  /// 每天的市場狀態（持股每日紀錄用）。
+  Map<String, Regime> get regimeByDate => {
+    for (final m in market)
+      if (m.regime != null) m.date: m.regime!,
+  };
+
+  /// 觀察池：中長期條件好、但今天沒有通過的進場訊號——等它出現進場點。
+  List<StockReport> get watchlist {
+    const keep = {
+      Opportunity.resonance,
+      Opportunity.swing,
+      Opportunity.longTurning,
+      Opportunity.waitEntry,
+      Opportunity.watchlist,
+    };
+    final r =
+        stocks
+            .where((s) => !s.recommended && s.liquid && keep.contains(s.opportunity) && s.duration.cls != null)
+            .toList()
+          ..sort((a, b) {
+            final c = a.opportunity.rank.compareTo(b.opportunity.rank);
+            if (c != 0) return c;
+            return ((b.medium.score ?? 0) + (b.long.score ?? 0)).compareTo((a.medium.score ?? 0) + (a.long.score ?? 0));
+          });
+    return r.take(40).toList();
+  }
 
   MarketDay? get today => market.isEmpty ? null : market.last;
 
@@ -164,6 +214,10 @@ class _Partial {
   final List<String> warnings;
   final double rsRaw;
   final double roc20, roc60, roc120, roc250;
+  final HorizonScore short, mediumBase, long;
+  final PvReading pv;
+  final DurationFacts facts;
+  final List<String> triggers;
   const _Partial(
     this.code,
     this.type,
@@ -181,7 +235,34 @@ class _Partial {
     this.roc60,
     this.roc120,
     this.roc250,
+    this.short,
+    this.mediumBase,
+    this.long,
+    this.pv,
+    this.facts,
+    this.triggers,
   );
+}
+
+/// 各期間報酬的全市場百分位（RS20／60／120／250），用原始日 K 直接算，不用建整條指標。
+Map<String, RsWindows> rsWindowsOf(Map<String, List<DailyBar>> series, String latest) {
+  final rocs = <int, List<(String, double)>>{20: [], 60: [], 120: [], 250: []};
+  for (final e in series.entries) {
+    final b = e.value;
+    if (b.isEmpty || b.last.date != latest) continue;
+    final i = b.length - 1;
+    for (final n in rocs.keys) {
+      if (i - n >= 0 && b[i - n].close > 0) rocs[n]!.add((e.key, b[i].close / b[i - n].close));
+    }
+  }
+  final pct = <int, Map<String, double>>{};
+  for (final e in rocs.entries) {
+    final l = e.value..sort((a, b) => a.$2.compareTo(b.$2));
+    pct[e.key] = {for (var k = 0; k < l.length; k++) l[k].$1: l.length < 2 ? 0.5 : k / (l.length - 1)};
+  }
+  return {
+    for (final code in pct[20]!.keys) code: RsWindows(pct[20]![code], pct[60]![code], pct[120]![code], pct[250]![code]),
+  };
 }
 
 /// 成交值前 [n] 名的一般股票（大型股），給市場廣度比較大型／中小型用。
@@ -222,12 +303,20 @@ AnalysisResult runAnalysis(AnalysisInput input) {
   if (input.dates.isEmpty) return AnalysisResult.empty;
   final latest = input.dates.last;
   final partials = <_Partial>[];
+  final rsw = rsWindowsOf(input.series, latest);
+  final candidates = <String, List<BtCandidate>>{};
+  final rsRawByDay = <String, Float32List>{};
+  final nd = input.dates.length;
   final indNow = <String, (String, IndustryInput)>{};
   final indPrev = <String, (String, IndustryInput)>{};
 
   final market = computeMarket(
     input,
     onSeries: (s, idx) {
+      // 歷史上每一次訊號的結果（給「同類訊號的歷史統計」用）
+      final type0 = securityTypeOf(s.code);
+      rsRawByDay[s.code] = rsRawSeries(s, idx, nd);
+      if (s.length >= kBtWarmup + 5) candidates[s.code] = btCandidates(s, idx, const BacktestConfig(), type0);
       if (s.bars.last.date != latest) return; // 今天沒交易（停牌、下市）
       final i = s.length - 1;
       final code = s.code;
@@ -249,6 +338,8 @@ AnalysisResult runAnalysis(AnalysisInput input) {
         volatilityModule(s, i),
       ];
       final hits = [for (final h in detectAll(s, i)) (h, buildPlan(s, i, h, type))];
+      final w = rsw[code] ?? const RsWindows(null, null, null, null);
+      final pv = priceVolume(s, i);
       partials.add(
         _Partial(
           code,
@@ -267,10 +358,17 @@ AnalysisResult runAnalysis(AnalysisInput input) {
           s.roc(i, 60),
           s.roc(i, 120),
           s.roc(i, 250),
+          shortHorizon(s, i, tech[1], tech[3], pv, w),
+          mediumHorizon(s, i, tech[0], pv, w),
+          longHorizon(s, i, w),
+          pv,
+          DurationFacts.of(s, i),
+          entryTriggers(s, i),
         ),
       );
     },
   );
+  final calibration = buildCalibration(candidates, rsRawByDay, market, nd);
 
   final today = market.last;
   final regime = today.regime;
@@ -340,7 +438,34 @@ AnalysisResult runAnalysis(AnalysisInput input) {
     }
     if (hitResults.isNotEmpty) withSignal++;
 
+    final primaryHit = hitResults.where((h) => h.passed).firstOrNull ?? hitResults.firstOrNull;
+    final medium = p.mediumBase.extend(
+      mediumContext(industryScore: ind?.score, industryLabel: ind?.cls.label, marketScore: today.score),
+    );
+    final pv = p.pv.withContext(regime, ind?.cls);
+    final w = rsw[p.code] ?? const RsWindows(null, null, null, null);
+    final opportunity = classifyOpportunity(p.short.level, medium.level, p.long.level);
+    final duration = estimateDuration(
+      facts: p.facts,
+      short: p.short,
+      medium: medium,
+      long: p.long,
+      pv: pv,
+      rs: w,
+      strategy: primaryHit?.hit.strategy,
+      industryScore: ind?.score,
+      industryClass: ind?.cls,
+      industry: industry,
+      marketScore: today.score,
+      regime: regime,
+    );
+    final cal = primaryHit == null ? null : calibration.lookup(primaryHit.hit.strategy, regime);
+
     final warnings = [...p.warnings];
+    if (cal != null && cal.reliable == false) {
+      warnings.add('歷史上「${cal.title}」的訊號平均是虧損的（${cal.n} 次、平均 ${cal.avgR.toStringAsFixed(2)}R），這類訊號要更保守');
+    }
+    if (pv.state.bad) warnings.add('量價「${pv.state.label}」：${pv.detail}');
     if (ind != null && (ind.cls == IndustryClass.weakening || ind.cls == IndustryClass.lagging)) {
       warnings.add('所屬「$industry」產業目前${ind.cls.label}（產業分數 ${ind.score.toStringAsFixed(0)}）');
     }
@@ -368,6 +493,15 @@ AnalysisResult runAnalysis(AnalysisInput input) {
         vetoes: vetoes,
         warnings: warnings,
         positives: _positives(modules, pct, rank, rsTotal, industry, ind, today),
+        liquid: p.liquidity == null,
+        short: p.short,
+        medium: medium,
+        long: p.long,
+        pv: pv,
+        opportunity: opportunity,
+        duration: duration,
+        triggers: p.triggers,
+        calibration: cal,
       ),
     );
   }
@@ -379,6 +513,7 @@ AnalysisResult runAnalysis(AnalysisInput input) {
     industries: industries,
     stocks: stocks,
     funnel: Funnel(stocks.length, liquid, withSignal, rec),
+    calibration: calibration,
   );
 }
 

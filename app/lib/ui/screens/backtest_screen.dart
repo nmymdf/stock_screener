@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../../data/history_store.dart';
 import '../../data/stock_catalog.dart';
 import '../../logic/engine/backtest.dart';
+import '../../logic/engine/market_engine.dart';
 import '../../logic/engine/signals.dart';
 import '../theme.dart';
 import '../widgets/charts.dart';
@@ -125,8 +126,8 @@ class _BacktestScreenState extends State<BacktestScreen> {
     }
     String pf(double v) => v.isInfinite ? '∞' : v.toStringAsFixed(2);
     Color? rc(double v) => changeColor(context, v);
-    final risk = context.read<HistoryStore>().risk;
-    final perTrade = o.avgR * risk.riskPct;
+    const riskPct = 1.0; // 舉例用：每筆承擔資金 1% 的風險
+    final perTrade = o.avgR * riskPct;
     return [
       SectionCard(
         title: '結果：${r.fromDate} ～ ${r.toDate}',
@@ -150,7 +151,7 @@ class _BacktestScreenState extends State<BacktestScreen> {
             const SizedBox(height: 8),
             Bullets([
               '「R」是每筆的初始風險（進場價到停損的距離）。平均每筆 ${o.avgR.toStringAsFixed(2)} R，'
-                  '如果照你的設定每筆承擔 ${risk.riskPct}% 資金的風險，平均每筆對資金的影響約 ${perTrade >= 0 ? '+' : ''}${perTrade.toStringAsFixed(3)}%。',
+                  '如果每筆承擔 ${riskPct.toStringAsFixed(0)}% 資金的風險（停損時虧總資金 1%），平均每筆對資金的影響約 ${perTrade >= 0 ? '+' : ''}${perTrade.toStringAsFixed(3)}%。',
               '勝率不需要很高：盈虧比 ${pf(o.payoff)} 代表賺的時候平均賺 ${o.avgWinR.toStringAsFixed(2)} R、賠的時候平均賠 ${o.avgLossR.abs().toStringAsFixed(2)} R。',
               if (o.profitFactor < 1) '⚠ Profit Factor < 1：這段期間這組規則是虧錢的，不應該照著實盤操作。',
               '訊號 ${r.signals} 次：${r.skippedChase} 次因為隔天開盤超過可接受價（或開盤漲停）而放棄、沒有追價；'
@@ -225,6 +226,32 @@ class _BacktestScreenState extends State<BacktestScreen> {
           ],
         ),
       ),
+      if (r.byRegime.isNotEmpty)
+        SectionCard(
+          title: '不同市場狀態下的表現',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final e in r.byRegime.entries)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      SizedBox(width: 108, child: Tag(e.key.label, regimeColor(e.key))),
+                      Expanded(
+                        child: Text(
+                          '${e.value.n} 筆 · 勝率 ${(e.value.winRate * 100).toStringAsFixed(0)}% · '
+                          '平均 ${e.value.avgR.toStringAsFixed(2)} R · PF ${pf(e.value.profitFactor)}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              Text('訊號出現那天的市場狀態。推薦頁和持股頁的「歷史勝率」就是用這個分組（同一種訊號＋同一種市場狀態）算的。', style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+        ),
       SectionCard(
         title: '穩健度檢查（§15.2）',
         child: Column(
@@ -241,8 +268,8 @@ class _BacktestScreenState extends State<BacktestScreen> {
               '中位數 ${r.mcDdMedian.toStringAsFixed(1)} R · 95% ${r.mcDd95.toStringAsFixed(1)} R',
               note:
                   '把交易順序隨機打亂 1,000 次：運氣不好時可能遇到的回撤。用它來決定單筆風險——'
-                  '例如 95% 回撤 ${r.mcDd95.toStringAsFixed(0)} R × 單筆 ${context.read<HistoryStore>().risk.riskPct}% '
-                  '≈ 帳戶回撤 ${(r.mcDd95 * context.read<HistoryStore>().risk.riskPct).toStringAsFixed(1)}%。',
+                  '例如 95% 回撤 ${r.mcDd95.toStringAsFixed(0)} R × 單筆 1% '
+                  '≈ 帳戶回撤 ${(r.mcDd95 * riskPct).toStringAsFixed(1)}%。',
             ),
           ],
         ),

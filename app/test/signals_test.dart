@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_screener/data/stock_industry.dart';
 import 'package:stock_screener/logic/engine/signals.dart';
-import 'package:stock_screener/logic/risk.dart';
 import 'package:stock_screener/logic/ta.dart';
 
 import 'support/synthetic.dart';
@@ -41,37 +40,5 @@ void main() {
     expect(roundDownTick(123.7, SecurityType.stock), 123.5);
     expect(roundUpTick(123.2, SecurityType.stock), 123.5);
     expect(roundDownTick(1012, SecurityType.stock), 1010);
-  });
-
-  test('張數試算：依風險決定，再被單檔曝險上限限制', () {
-    const plan = TradePlan(
-      strategy: Strategy.breakout,
-      entry: 100,
-      maxEntry: 101,
-      stop: 95,
-      stopBasis: '',
-      target: 110,
-      targetBasis: '',
-      resistance: null,
-      rr: 2,
-      atr: 2,
-      trailing: 94,
-      timeStopDays: 10,
-      vetoes: [],
-    );
-    // 1000 萬、0.5% = 5 萬；每股風險 5 + 0.2（滑價）→ 9,615 股；單檔上限 10% = 100 萬 / 100 = 10,000 股
-    final s = sizePosition(const RiskSettings(capital: 1e7), plan);
-    expect(s.shares, 9615);
-    expect(s.lots, 9);
-    expect(s.oddShares, 615);
-    expect(s.cappedByExposure, false);
-    // 單檔上限 5% → 5,000 股
-    final c = sizePosition(const RiskSettings(capital: 1e7, maxPositionPct: 5), plan);
-    expect(c.shares, 5000);
-    expect(c.cappedByExposure, true);
-    // 回撤 12% → 單筆風險 × 0.5
-    expect(sizePosition(const RiskSettings(capital: 1e7, drawdownPct: 12), plan).shares, 4807);
-    // 回撤超過 15% → 停止新單
-    expect(sizePosition(const RiskSettings(capital: 1e7, drawdownPct: 16), plan).shares, 0);
   });
 }

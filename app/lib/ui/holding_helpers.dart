@@ -16,23 +16,32 @@ HoldingEval evalFor(BuildContext context, Holding h) {
   final a = store.analysis;
   final report = a?.stock(h.code);
   final industry = industryOf(h.code);
+  final regime = a?.today?.regime;
   return evaluateHolding(
     h,
     adjusted: store.seriesOf(h.code),
     raw: store.rawSeriesOf(h.code),
-    regime: a?.today?.regime,
+    regime: regime,
     industry: industry,
     industryClass: a?.industry(industry)?.cls,
     newSignal: report?.primary?.hit.strategy.label,
+    regimeByDate: a?.regimeByDate,
+    taiex: store.taiexByDate,
+    calibration: a?.calibration.byCode(h.strategy, regime),
   );
 }
 
-/// 推薦訊號對應的預設持有方式：突破、趨勢延續偏波段；回檔、均值回歸偏短線。
-HoldStyle defaultStyleFor(Strategy? s) => switch (s) {
-  Strategy.breakout || Strategy.continuation => HoldStyle.swing,
-  Strategy.pullback || Strategy.meanReversion => HoldStyle.short,
-  null => HoldStyle.swing,
-};
+/// 預設持有方式：先看預估持有期間（D1 短線、D2／D3 波段），沒有的話看訊號類型
+/// （突破、趨勢延續偏波段；回檔、均值回歸偏短線）。
+HoldStyle defaultStyleFor(Strategy? s, {int? duration}) {
+  if (s == Strategy.meanReversion) return HoldStyle.short;
+  if (duration != null) return duration <= 1 ? HoldStyle.short : HoldStyle.swing;
+  return switch (s) {
+    Strategy.breakout || Strategy.continuation => HoldStyle.swing,
+    Strategy.pullback || Strategy.meanReversion => HoldStyle.short,
+    null => HoldStyle.swing,
+  };
+}
 
 Color stateColor(HoldState s) => switch (s) {
   HoldState.stopLoss => const Color(0xFFD32F2F),

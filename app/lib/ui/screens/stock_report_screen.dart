@@ -1,5 +1,6 @@
-/// 個股分析報告：推薦理由（為什麼選它／要注意什麼／為什麼被否決）、
-/// 交易計畫（進場、停損、目標、張數）、走勢圖、各模組分數逐項拆解、技術指標。
+/// 個股分析報告：短中長交叉分析與機會類型、預估持有期間（D1～D3＋信心度＋
+/// 升降級條件）、推薦理由、交易計畫（進場、停損、目標、加碼時機、明天怎麼做）、
+/// 歷史上同類訊號的結果、量價狀態、走勢圖、各模組分數逐項拆解、技術指標。
 library;
 
 import 'dart:math' as math;
@@ -12,25 +13,18 @@ import '../../data/holdings_store.dart';
 import '../../data/stock_catalog.dart';
 import '../../data/stock_industry.dart';
 import '../../logic/engine/analysis.dart';
+import '../../logic/engine/horizon.dart';
 import '../../logic/engine/industry_engine.dart';
 import '../../logic/engine/signals.dart';
-import '../../logic/risk.dart';
 import '../../logic/ta.dart';
 import '../format.dart';
 import '../theme.dart';
 import '../widgets/charts.dart';
 import '../widgets/common.dart';
+import '../widgets/horizon_widgets.dart';
 import '../widgets/score_widgets.dart';
 import 'holding_detail_screen.dart';
 import 'holding_forms.dart';
-import 'risk_settings_screen.dart';
-
-String sizeLabel(RiskSettings r, TradePlan p) {
-  final s = sizePosition(r, p);
-  if (s.shares == 0) return r.drawdownMultiplier == 0 ? '停止新單（回撤過大）' : '資金不足一股';
-  if (s.lots == 0) return '建議 ${s.oddShares} 股（零股）';
-  return '建議 ${s.lots} 張${s.oddShares > 0 ? ' ${s.oddShares} 股' : ''}';
-}
 
 class StockReportScreen extends StatelessWidget {
   final String code;
@@ -62,8 +56,25 @@ class StockReportScreen extends StatelessWidget {
               if (report != null) ...[
                 _Header(r: report),
                 _HoldingAction(code: code, report: report),
+                _HorizonCard(r: report),
+                _DurationCard(r: report),
                 _Reasons(r: report),
                 for (final h in report.hits) _PlanCard(r: report, h: h, primary: identical(h, report.primary)),
+                if (report.calibration != null)
+                  SectionCard(title: '歷史上同類訊號的結果', child: CalibrationView(report.calibration!)),
+                if (!report.recommended && report.triggers.isNotEmpty)
+                  SectionCard(
+                    title: '什麼情況會變成可以買',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Bullets(report.triggers, BulletKind.info),
+                        const SizedBox(height: 4),
+                        Text('條件出現的那天收盤後，這檔就會出現在「推薦」裡，並附上完整的停損和目標。', style: Theme.of(context).textTheme.bodySmall),
+                      ],
+                    ),
+                  ),
+                _PvCard(r: report),
               ] else
                 const SectionCard(
                   child: Text(
@@ -135,6 +146,8 @@ class _Header extends StatelessWidget {
                         rec ? const Color(0xFF0B7A6F) : Colors.grey,
                         filled: rec,
                       ),
+                      Tag(r.opportunity.label, opportunityColor(r.opportunity), filled: true),
+                      DurationTag(r.duration),
                       if (r.industry != null)
                         Tag(
                           '${r.industry}${r.industryClass == null ? '' : '・${r.industryClass!.label}'}',
@@ -222,10 +235,7 @@ class _PlanCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final store = context.watch<HistoryStore>();
     final p = h.plan;
-    final sz = sizePosition(store.risk, p);
-    final pctOf = store.risk.capital == 0 ? 0 : sz.riskAmount / store.risk.capital * 100;
     return SectionCard(
       title: '交易計畫 · ${h.hit.strategy.label}${h.passed ? '' : '（被否決，僅供參考）'}',
       trailing: StrategyTag(code: h.hit.strategy.code, label: h.hit.strategy.code, dimmed: !h.passed),
@@ -234,7 +244,12 @@ class _PlanCard extends StatelessWidget {
         children: [
           KvRow('參考進場價', f2(p.entry), note: '今天收盤價；訊號是收盤後才確認的，實際在明天開盤後進場'),
           KvRow('可接受最高買價', f2(p.maxEntry), note: '收盤 + 0.5 ATR。明天開盤超過這個價就不追（避免追價，§13）'),
-          KvRow('停損', '${f2(p.stop)}（−${p.riskPct.toStringAsFixed(1)}%）', color: AppColors.down, note: p.stopBasis),
+          KvRow(
+            '停損',
+            '${f2(p.stop)}（−${p.riskPct.toStringAsFixed(1)}%）',
+            color: AppColors.down,
+            note: '${p.stopBasis}。每股風險 ${f2(p.risk)} 元（1R）。',
+          ),
           KvRow(
             '目標',
             '${f2(p.target)}（+${((p.target / p.entry - 1) * 100).toStringAsFixed(1)}%）',
@@ -256,29 +271,18 @@ class _PlanCard extends StatelessWidget {
                   '${p.timeStopDays} 個交易日還沒有 +1R 就出場（時間停損）。',
             ),
           const Divider(height: 18),
-          Row(
-            children: [
-              const Expanded(
-                child: Text('建議部位', style: TextStyle(fontWeight: FontWeight.w700)),
-              ),
-              TextButton(
-                onPressed: () =>
-                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RiskSettingsScreen())),
-                child: const Text('調整資金／風險設定'),
-              ),
-            ],
-          ),
-          KvRow(
-            sizeLabel(store.risk, p),
-            '${f0(sz.amount)} 元',
-            note:
-                '總資金 ${f0(store.risk.capital)} 元、單筆風險 ${store.risk.riskPct}%、單檔上限 ${store.risk.maxPositionPct.toStringAsFixed(0)}%。${sz.note}',
-          ),
-          KvRow(
-            '碰到停損的虧損',
-            '${f0(sz.riskAmount)} 元（${pctOf.toStringAsFixed(2)}% 資金）',
-            note: '部位大小由「可以承受的損失」決定，不是固定買多少錢（§11.1）。${store.risk.drawdownNote}',
-          ),
+          const Text('明天怎麼做', style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Bullets([
+            '開盤 ≤ ${f2(p.maxEntry)}：可以進場',
+            '開盤 > ${f2(p.maxEntry)}：不追，等回檔或下一個訊號',
+            '開盤就 ≤ ${f2(p.stop)}（跌破停損）：訊號失效，不買',
+          ], BulletKind.info),
+          const SizedBox(height: 8),
+          const Text('可能的加碼時機（只加贏家）', style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Bullets(addOnPlanFor(p, r), BulletKind.good),
+          const SizedBox(height: 4),
           if (tickSize(p.entry, r.type) > 0)
             Text(
               '價格都已對齊台股跳動單位（這個價位 tick = ${tickSize(p.entry, r.type)}${r.type == SecurityType.stock ? '' : '，ETF 規則'}）。',
@@ -391,6 +395,10 @@ class _HoldingAction extends StatelessWidget {
                             stop: h.plan.stop,
                             target: h.plan.target,
                             reason: h.hit.headline,
+                            opportunity: report.opportunity.label,
+                            duration: report.duration.cls,
+                            confidence: report.duration.confidence.label,
+                            thesis: [h.hit.headline, ...report.duration.why.take(4)],
                           ),
                   ),
                 ),
@@ -405,6 +413,168 @@ class _HoldingAction extends StatelessWidget {
               icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
               label: Text('已持有 ${holding.shares} 股，看持股追蹤'),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 交易計畫的加碼時機（含價格）。
+List<String> addOnPlanFor(TradePlan p, StockReport r) {
+  if (p.strategy == Strategy.meanReversion) {
+    return ['均值回歸型的目標就是 20 日線、空間有限，不加碼；到目標全部出場。'];
+  }
+  final one = p.entry + p.risk;
+  return [
+    '① 收盤站上 +1R（${f2(one)}），停損拉到成本 ${f2(p.entry)} 之後，第一次加碼（≤ 原始股數的一半）',
+    if (p.strategy == Strategy.pullback)
+      '② 之後回測 20 日線量縮、再收盤站上前一天高點，第二次加碼（≤ 四分之一）'
+    else
+      '② 創高後回檔整理、守住 20 日線，再放量突破前高時，第二次加碼（≤ 四分之一）',
+    '加碼後整筆停損至少拉到新的平均成本；虧損中一律不加碼（禁止向下攤平）',
+  ];
+}
+
+/// 短中長交叉：三個分數、各自的失效條件、這是哪一種機會。
+class _HorizonCard extends StatelessWidget {
+  final StockReport r;
+  const _HorizonCard({required this.r});
+
+  @override
+  Widget build(BuildContext context) {
+    final o = r.opportunity;
+    return SectionCard(
+      title: '短中長交叉分析',
+      trailing: Tag(o.label, opportunityColor(o), filled: true),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '短期 ${r.short.level.label}・中期 ${r.medium.level.label}・長期 ${r.long.level.label} → ${o.label}',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 2),
+          Text(o.strategy, style: const TextStyle(fontSize: 13, height: 1.4)),
+          const SizedBox(height: 6),
+          HorizonTile(r.short),
+          HorizonTile(r.medium),
+          HorizonTile(r.long),
+          Text(
+            '三個週期各有自己的失效條件，不會互相拿來合理化：短線失效就照短線處理，不會因為長期分數高就改成長抱。（點開看每一分怎麼來）',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 預估持有期間：D 等級、信心度、為什麼、為什麼還不是更長、升降級條件、失效條件、證據來源。
+class _DurationCard extends StatelessWidget {
+  final StockReport r;
+  const _DurationCard({required this.r});
+
+  @override
+  Widget build(BuildContext context) {
+    final d = r.duration;
+    final small = Theme.of(context).textTheme.bodySmall;
+    return SectionCard(
+      title: '預估持有期間',
+      trailing: DurationTag(d),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(d.label, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+          Text('信心度 ${d.confidence.label}：${d.confidence.meaning}', style: small),
+          const SizedBox(height: 8),
+          if (d.why.isNotEmpty) ...[
+            const Text('為什麼是這個期間', style: TextStyle(fontWeight: FontWeight.w600)),
+            Bullets(d.why, BulletKind.good),
+          ],
+          if (d.capped.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            const Text('被往下調的原因', style: TextStyle(fontWeight: FontWeight.w600)),
+            Bullets(d.capped, BulletKind.warn),
+          ],
+          const SizedBox(height: 4),
+          Text(d.whyNotHigher, style: const TextStyle(fontSize: 13, height: 1.4)),
+          if (d.upgradeIf.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Text('升級條件（可以抱更久）', style: TextStyle(fontWeight: FontWeight.w600)),
+            Bullets(d.upgradeIf, BulletKind.info),
+          ],
+          if (d.downgradeIf.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            const Text('降級條件（要縮短）', style: TextStyle(fontWeight: FontWeight.w600)),
+            Bullets(d.downgradeIf, BulletKind.warn),
+          ],
+          const SizedBox(height: 6),
+          KvRow('理由失效（立刻檢討出場）', '', note: d.hardInvalidation),
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              title: Text('證據來源（持續性分數 ${d.durationScore.toStringAsFixed(0)}）', style: const TextStyle(fontSize: 13)),
+              children: [
+                for (final e in d.evidence)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(width: 34, child: Text('${e.weight.toStringAsFixed(0)}%', style: small)),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(e.name, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                              Text(e.detail, style: small),
+                            ],
+                          ),
+                        ),
+                        Text(
+                          e.score == null ? '尚無資料' : e.score!.toStringAsFixed(0),
+                          style: TextStyle(fontWeight: FontWeight.w700, color: scoreColor(context, e.score)),
+                        ),
+                      ],
+                    ),
+                  ),
+                Text('沒有資料的來源不列入，權重重新分配。基本面、事件資料接上後，持有期間才可能估到 D4／D5。', style: small),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 量價狀態、價量持續性、突破品質。
+class _PvCard extends StatelessWidget {
+  final StockReport r;
+  const _PvCard({required this.r});
+
+  @override
+  Widget build(BuildContext context) {
+    final pv = r.pv;
+    return SectionCard(
+      title: '量價：${pv.state.label}',
+      trailing: Tag('持續性 ${pv.persistence.toStringAsFixed(0)}', scoreColor(context, pv.persistence)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('${pv.detail}。${pv.state.meaning}。', style: const TextStyle(fontSize: 13, height: 1.4)),
+          const SizedBox(height: 6),
+          const Text('價量持續性（中長期是累積還是分配）', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          for (final x in pv.persistenceItems) ScoreItemRow(x),
+          if (pv.breakoutQuality != null) ...[
+            const SizedBox(height: 8),
+            Text(
+              '突破品質 ${pv.breakoutQuality!.toStringAsFixed(0)} 分',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            ),
+            for (final x in pv.breakoutItems) ScoreItemRow(x),
+          ],
         ],
       ),
     );

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_screener/data/stock_industry.dart';
+import 'package:stock_screener/logic/engine/backtest.dart';
 import 'package:stock_screener/logic/engine/market_engine.dart';
 import 'package:stock_screener/logic/holding_eval.dart';
 import 'package:stock_screener/models/daily_bar.dart';
@@ -42,7 +43,7 @@ HoldingEval eval(Holding h, List<DailyBar> bars, {Regime? regime, String? newSig
     evaluateHolding(h, adjusted: bars, raw: bars, regime: regime, newSignal: newSignal);
 
 void main() {
-  final dates = tradingDays(120);
+  final dates = tradingDays(140);
   // 前 40 天在 100 附近，讓 ATR 穩定
   final base = [for (var i = 0; i < 40; i++) 100.0];
 
@@ -182,5 +183,136 @@ void main() {
     expect(Holding.fromJson(h.toJson()).toJson(), h.toJson());
     expect(h.shares, 500);
     expect(h.avgCost, 600);
+  });
+
+  group('每日追蹤紀錄', () {
+    test('從買進到今天每個交易日一筆：收盤、損益、停損、事件、建議', () {
+      final up = [...base, 102.0, 104, 106, 108, 110, 112, 113];
+      final h = holding(dates[39], 100, HoldStyle.swing);
+      final r = eval(h, barsOf(dates, up));
+      expect(r.log.length, up.length - 39); // 買進那天起
+      expect(r.log.first.date, dates[39]);
+      expect(r.log.last.date, dates[up.length - 1]);
+      expect(r.log.first.events.join(), contains('你記錄買進'));
+      // 漲到 +1R 那天寫出「停損拉到成本」，之後停損只會往上
+      expect(r.log.any((x) => x.events.any((ev) => ev.contains('停損拉到成本'))), true);
+      for (var i = 1; i < r.log.length; i++) {
+        expect(r.log[i].stop, greaterThanOrEqualTo(r.log[i - 1].stop - 1e-9));
+        expect(r.log[i].reason, isNotEmpty);
+      }
+      expect(r.log.last.r, closeTo(r.rNow!, 1e-9));
+      expect(r.summary!.lines.first, contains('已持有'));
+      expect(r.action, r.log.last.action);
+    });
+
+    test('跌破停損沒處理：之後每天標「應已出場・未處理」，紀律記成還沒處理', () {
+      final closes = [...base, 99, 98, 97, 95, 94, 94.5, 95];
+      final h = holding(dates[39], 100, HoldStyle.short);
+      final r = eval(h, barsOf(dates, closes));
+      expect(r.state, HoldState.stopLoss);
+      final trigger = r.log.indexWhere((x) => x.action == DailyAction.stopLoss);
+      expect(trigger, greaterThan(0));
+      for (final x in r.log.skip(trigger + 1)) {
+        expect(x.action, DailyAction.overdue);
+        expect(x.reason, contains('沒有處理'));
+      }
+      expect(r.action, DailyAction.overdue);
+      expect(r.discipline.single.status, DisciplineStatus.pending);
+      expect(r.scenario.single.when, '明天開盤');
+    });
+
+    test('紀律：訊號隔天就賣是準時；晚三天才賣算晚處理，並算出多賠多少', () {
+      final closes = [...base, 99, 98, 97, 95, 94, 93, 92, 91];
+      final t = dates[43]; // 95 跌破停損 ≈ 96
+      final onTime = holding(dates[39], 100, HoldStyle.short, sells: [SellLot(dates[44], 94, 1000)]);
+      final late = holding(dates[39], 100, HoldStyle.short, sells: [SellLot(dates[47], 91, 1000)]);
+      final a = eval(onTime, barsOf(dates, closes));
+      final b = eval(late, barsOf(dates, closes));
+      expect(a.discipline.single.signalDate, t);
+      expect(a.discipline.single.status, DisciplineStatus.onTime);
+      expect(b.discipline.single.status, DisciplineStatus.late);
+      expect(b.discipline.single.delayDays, 4);
+      expect(b.discipline.single.delayCost, closeTo((95 - 91) * 1000, 1e-6));
+      final st = disciplineStats([a, b]);
+      expect(st.onTime, 1);
+      expect(st.late, 1);
+      expect(st.rate, 0.5);
+      // 全部賣掉後：紀錄只到賣出那天，最後一筆是已結案、有結案摘要
+      expect(a.log.last.date, dates[44]);
+      expect(a.action, DailyAction.closed);
+      expect(a.summary!.lines.first, contains('已實現'));
+    });
+
+    test('買進理由大多失效（健康度連續兩天 < 40）：跌破停損前就先建議減碼一半', () {
+      // 長期上漲後買進，接著緩跌：跌破 20 日線、趨勢轉弱、動能消失，但還沒碰到 15% 的長期停損
+      final rise = [for (var i = 0; i < 80; i++) 100.0 + i];
+      final drift = [for (var i = 1; i <= 45; i++) 179.0 - i * 0.55];
+      final h = holding(dates[79], 179, HoldStyle.long);
+      final r = eval(h, barsOf(dates, [...rise, ...drift]));
+      final reduce = r.log.where((x) => x.action == DailyAction.sellHalf).toList();
+      expect(reduce, isNotEmpty);
+      expect(reduce.first.reason, contains('先減碼一半'));
+      expect(reduce.first.health, lessThan(40));
+      // 那一天還沒跌破停損，而且比真正的出場訊號早
+      expect(reduce.first.close, greaterThan(179 * 0.85));
+      final exit = r.log.indexWhere((x) => x.action == DailyAction.stopLoss || x.action == DailyAction.exit);
+      if (exit >= 0) expect(r.log.indexOf(reduce.first), lessThan(exit));
+    });
+
+    test('明日劇本與加碼時機：停損價、警戒區、續抱、+1R、加碼條件都有價格', () {
+      final closes = [...base, 101.0, 102, 101.5];
+      final h = holding(dates[39], 100, HoldStyle.swing);
+      final r = eval(h, barsOf(dates, closes));
+      expect(r.scenario.first.when, startsWith('收盤 <'));
+      expect(r.scenario.first.kind, DailyAction.stopLoss);
+      expect(r.scenario.any((s) => s.action.contains('+1R')), true);
+      expect(r.scenario.any((s) => s.kind == DailyAction.addOn), true);
+      expect(r.addOnPlan.first.price, closeTo(100 + r.risk!, 1e-9));
+      expect(r.addOnPlan.first.status, AddOnStatus.waiting);
+      // 虧損時加碼全部擋下
+      final down = eval(holding(dates[39], 100, HoldStyle.swing), barsOf(dates, [...base, 99.0, 98.5]));
+      expect(down.addOnPlan.every((a) => a.status == AddOnStatus.blocked), true);
+      expect(down.addOnRules.first, contains('禁止向下攤平'));
+      // 均值回歸型不加碼
+      final mr = evaluateHolding(
+        Holding(id: 'm', code: '2330', style: HoldStyle.short, buys: [BuyLot(dates[39], 100, 1000)], strategy: 'D'),
+        adjusted: barsOf(dates, closes),
+        raw: barsOf(dates, closes),
+      );
+      expect(mr.addOnPlan, isEmpty);
+      expect(mr.addOnRules.single, contains('不加碼'));
+    });
+
+    test('不能把虧損的短線改成長期：擋下並說明；賺 1R 以上才放行', () {
+      final down = [...base, 99.0, 98.5];
+      final h = holding(dates[39], 100, HoldStyle.short);
+      final e = eval(h, barsOf(dates, down));
+      final c = styleUpgradeCheck(h, HoldStyle.long, e)!;
+      expect(c.$1, true);
+      expect(c.$2, contains('虧損'));
+      expect(styleUpgradeCheck(h, HoldStyle.short, e), isNull);
+      final up = [...base, 102.0, 104, 106, 108];
+      final e2 = eval(h, barsOf(dates, up));
+      expect(styleUpgradeCheck(h, HoldStyle.swing, e2), isNull);
+    });
+
+    test('同類訊號的典型走勢：落後時提醒', () {
+      final closes = [...base, 100.2, 99.9, 100.1, 99.8, 100.0];
+      final h = holding(dates[39], 100, HoldStyle.swing);
+      const cal = CalStat(
+        title: 'A',
+        n: 50,
+        wins: 25,
+        hitTarget: 10,
+        hitStop: 10,
+        avgR: 0.3,
+        avgDays: 8,
+        cone: [ConePoint(1, 0.1, 0.3, 0.6), ConePoint(3, 0.3, 0.6, 1.0), ConePoint(5, 0.5, 0.9, 1.4)],
+      );
+      final r = evaluateHolding(h, adjusted: barsOf(dates, closes), raw: barsOf(dates, closes), calibration: cal);
+      expect(r.coneNote, contains('落後'));
+      expect(r.state, HoldState.watch);
+      expect([r.headline, ...r.reasons].join(), contains('落後同類訊號'));
+    });
   });
 }

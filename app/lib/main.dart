@@ -5,10 +5,11 @@ import 'data/history_store.dart';
 import 'data/holdings_store.dart';
 import 'ui/home.dart';
 import 'ui/theme.dart';
+import 'ui/widgets/horizon_widgets.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(StockScreenerApp(store: HistoryStore()..load(), holdings: HoldingsStore()..load()));
+  runApp(StockScreenerApp(store: HistoryStore(autoSync: true)..load(), holdings: HoldingsStore()..load()));
 }
 
 class StockScreenerApp extends StatelessWidget {
@@ -29,6 +30,15 @@ class StockScreenerApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         theme: buildTheme(Brightness.light),
         darkTheme: buildTheme(Brightness.dark),
+        // 每個畫面最上面都有版本和作者
+        builder: (context, child) => Column(
+          children: [
+            const AppBanner(),
+            Expanded(
+              child: MediaQuery.removePadding(context: context, removeTop: true, child: child ?? const SizedBox()),
+            ),
+          ],
+        ),
         home: const _Root(),
       ),
     );

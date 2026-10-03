@@ -1,23 +1,25 @@
-/// 「推薦」：通過所有否決、依總分排序的候選股，每一檔都寫出推薦理由和
-/// 交易計畫。也可以切換看「有訊號但被否決」的股票和否決原因。
+/// 「推薦」：通過所有否決、依總分排序的候選股，每一檔都寫出機會類型（短中長
+/// 交叉）、預估持有期間、推薦理由、歷史勝率和交易計畫。另外有「觀察池」
+/// （中長期好、等進場點）和「被否決」（看否決原因）。
 library;
 
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
-import '../../data/history_store.dart';
 import '../../logic/engine/analysis.dart';
+import '../../logic/engine/horizon.dart';
 import '../../logic/engine/industry_engine.dart';
 import '../../logic/engine/market_engine.dart';
 import '../../logic/engine/signals.dart';
-import '../../logic/risk.dart';
 import '../format.dart';
 import '../home.dart';
 import '../theme.dart';
 import '../widgets/analysis_gate.dart';
 import '../widgets/common.dart';
+import '../widgets/horizon_widgets.dart';
 import '../widgets/score_widgets.dart';
 import 'stock_report_screen.dart';
+
+enum _Mode { recommend, watch, rejected }
 
 class RecommendScreen extends StatefulWidget {
   const RecommendScreen({super.key});
@@ -27,14 +29,10 @@ class RecommendScreen extends StatefulWidget {
 }
 
 class _RecommendScreenState extends State<RecommendScreen> {
-  Strategy? _filter;
-  bool _showRejected = false;
+  _Mode _mode = _Mode.recommend;
+  int? _horizon; // null = 全部；1／2／3 = D1／D2／D3
 
-  bool _match(StockReport s) {
-    if (_filter == null) return true;
-    if (_showRejected) return s.hits.any((h) => h.hit.strategy == _filter);
-    return s.primary?.hit.strategy == _filter;
-  }
+  bool _match(StockReport s) => _horizon == null || s.duration.cls == _horizon;
 
   @override
   Widget build(BuildContext context) {
@@ -42,13 +40,15 @@ class _RecommendScreenState extends State<RecommendScreen> {
       builder: (context, a) {
         final recs = a.recommendations;
         final rejected = a.rejected;
-        final list = (_showRejected ? rejected : recs).where(_match).toList();
+        final watch = a.watchlist;
+        final base = switch (_mode) {
+          _Mode.recommend => recs,
+          _Mode.watch => watch,
+          _Mode.rejected => rejected,
+        };
+        final list = base.where(_match).toList();
         final today = a.today;
-        int count(Strategy s) =>
-            (_showRejected
-                    ? rejected.where((r) => r.hits.any((h) => h.hit.strategy == s))
-                    : recs.where((r) => r.primary?.hit.strategy == s))
-                .length;
+        int count(int d) => base.where((s) => s.duration.cls == d).length;
         return [
           Row(
             children: [
@@ -62,33 +62,43 @@ class _RecommendScreenState extends State<RecommendScreen> {
           if (today != null) _MarketBanner(day: today),
           const SizedBox(height: 6),
           _FunnelCard(f: a.funnel),
+          const SizedBox(height: 8),
+          SegmentedButton<_Mode>(
+            showSelectedIcon: false,
+            segments: [
+              ButtonSegment(value: _Mode.recommend, label: Text('推薦 ${recs.length}')),
+              ButtonSegment(value: _Mode.watch, label: Text('觀察池 ${watch.length}')),
+              ButtonSegment(value: _Mode.rejected, label: Text('被否決 ${rejected.length}')),
+            ],
+            selected: {_mode},
+            onSelectionChanged: (s) => setState(() => _mode = s.first),
+          ),
+          const SizedBox(height: 6),
+          Text(switch (_mode) {
+            _Mode.recommend => '今天出現進場訊號、通過所有否決的股票。依預估持有期間分成短線、波段、中長期。',
+            _Mode.watch => '中長期條件好、但今天沒有進場點的股票。每一檔都寫出「什麼情況會變成可以買」，先放著等。',
+            _Mode.rejected => '有訊號但被一票否決（流動性、停損過寬、報酬風險比不足、分數不夠…），看系統為什麼不推薦。',
+          }, style: Theme.of(context).textTheme.bodySmall),
           const SizedBox(height: 6),
           Wrap(
             spacing: 6,
             runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               ChoiceChip(
-                label: Text('全部 ${_showRejected ? rejected.length : recs.length}'),
-                selected: _filter == null,
-                onSelected: (_) => setState(() => _filter = null),
+                label: Text('全部 ${base.length}'),
+                selected: _horizon == null,
+                onSelected: (_) => setState(() => _horizon = null),
               ),
-              for (final s in Strategy.values)
+              for (final (d, name) in [(1, '短線'), (2, '波段'), (3, '中長期')])
                 ChoiceChip(
-                  label: Text('${s.label} ${count(s)}'),
-                  selected: _filter == s,
-                  onSelected: (_) => setState(() => _filter = _filter == s ? null : s),
+                  label: Text('$name D$d ${count(d)}'),
+                  tooltip: kDurationRange[d],
+                  selected: _horizon == d,
+                  onSelected: (_) => setState(() => _horizon = _horizon == d ? null : d),
                 ),
             ],
           ),
-          SwitchListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: const Text('改看「有訊號但被否決」的股票', style: TextStyle(fontSize: 13)),
-            subtitle: const Text('看系統為什麼不推薦（流動性、停損過寬、報酬風險比不足、分數不夠…）', style: TextStyle(fontSize: 11)),
-            value: _showRejected,
-            onChanged: (v) => setState(() => _showRejected = v),
-          ),
+          const SizedBox(height: 4),
           if (list.isEmpty)
             Card(
               child: Padding(
@@ -96,12 +106,16 @@ class _RecommendScreenState extends State<RecommendScreen> {
                 child: Text(_emptyText(a, today), style: const TextStyle(fontSize: 13, height: 1.5)),
               ),
             ),
-          for (var i = 0; i < list.length; i++) _RecCard(rank: i + 1, s: list[i], rejected: _showRejected),
+          for (var i = 0; i < list.length; i++)
+            _mode == _Mode.watch
+                ? _WatchCard(s: list[i])
+                : _RecCard(rank: i + 1, s: list[i], rejected: _mode == _Mode.rejected),
           const SizedBox(height: 10),
           const DisclaimerCard(
             text:
-                '機械化篩選，不是投資建議。總分目前由技術面、相對強度、市場和產業組成；'
-                '基本面（15%）、籌碼（10%）還沒接資料，不列入計算。每一檔都請自己再確認基本面和新聞。',
+                '機械化篩選，不是投資建議。分數目前由技術面、相對強度、量價、市場和產業組成；'
+                '基本面、籌碼還沒接資料，所以長期分數只看技術面、持有期間最多估到 D3。'
+                '歷史勝率是用本機資料、跟推薦完全相同的條件回算的，過去不代表未來。',
           ),
         ];
       },
@@ -109,15 +123,17 @@ class _RecommendScreenState extends State<RecommendScreen> {
   }
 
   String _emptyText(AnalysisResult a, MarketDay? today) {
-    if (_showRejected) return '今天沒有「有訊號但被否決」的股票。';
+    if (_horizon != null) return '這個持有期間（D$_horizon）今天沒有股票，可以點「全部」看其他期間。';
+    if (_mode == _Mode.rejected) return '今天沒有「有訊號但被否決」的股票。';
+    if (_mode == _Mode.watch) return '觀察池是空的：今天沒有「中長期條件好、但還沒進場點」的股票。';
     if (today?.regime == Regime.bear) {
       return '市場處於「空頭／極端風險」（Market Score ${today!.score!.toStringAsFixed(0)}），'
           '依規格書原則停止一般多單，所以今天沒有推薦。這不是系統壞掉，而是風控在運作——'
-          '可以切換上面的開關，看哪些股票有訊號但被市場條件否決。';
+          '可以切到「被否決」看哪些股票有訊號但被市場條件否決，或看「觀察池」先準備名單。';
     }
-    if (a.funnel.withSignal == 0) return '今天全市場沒有任何股票出現 A／B／C／D 的進場訊號。';
+    if (a.funnel.withSignal == 0) return '今天全市場沒有任何股票出現 A／B／C／D 的進場訊號。可以看「觀察池」裡等待進場點的股票。';
     return '今天有 ${a.funnel.withSignal} 檔出現訊號，但都沒有通過一票否決或分數門檻。'
-        '打開上面的開關可以看每一檔被否決的原因。';
+        '切到「被否決」可以看每一檔被否決的原因。';
   }
 }
 
@@ -227,7 +243,6 @@ class _RecCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final risk = context.select<HistoryStore, RiskSettings>((st) => st.risk);
     final h = s.primary ?? (s.hits.isEmpty ? null : s.hits.first);
     final p = h?.plan;
     final small = Theme.of(context).textTheme.bodySmall;
@@ -240,57 +255,9 @@ class _RecCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  ScoreBadge(score: s.total, caption: '總分'),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            if (!rejected) RankBadge(rank: rank),
-                            Flexible(
-                              child: Text(
-                                '${s.code} ${s.name}',
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 3),
-                        Wrap(
-                          spacing: 4,
-                          runSpacing: 3,
-                          children: [
-                            for (final x in s.hits)
-                              StrategyTag(code: x.hit.strategy.code, label: x.hit.strategy.label, dimmed: !x.passed),
-                            if (s.industry != null)
-                              Tag(
-                                '${s.industry}${s.industryClass == null ? '' : '・${s.industryClass!.label}'}',
-                                industryClassColor(s.industryClass),
-                              ),
-                            if (s.rsRank != null) Tag('RS 第 ${s.rsRank} 名', Colors.blueGrey),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text(f2(s.close), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                      Text(
-                        pctTxt(s.changePct),
-                        style: TextStyle(fontSize: 12, color: changeColor(context, s.changePct)),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+              _StockHead(s: s, rank: rejected ? null : rank),
+              const SizedBox(height: 8),
+              HorizonTriple(short: s.short, medium: s.medium, long: s.long),
               if (h != null) ...[
                 const SizedBox(height: 8),
                 Text(h.hit.headline, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
@@ -301,20 +268,120 @@ class _RecCard extends StatelessWidget {
               ],
               if (rejected) ...[const SizedBox(height: 4), Bullets(s.allVetoes.take(2).toList(), BulletKind.bad)],
               if (!rejected && s.warnings.isNotEmpty) Bullets([s.warnings.first], BulletKind.warn),
+              if (!rejected && s.calibration != null) ...[
+                const SizedBox(height: 4),
+                CalibrationView(s.calibration!, compact: true),
+              ],
               if (p != null && !rejected) ...[
                 const Divider(height: 16),
                 Wrap(
                   spacing: 14,
                   runSpacing: 2,
                   children: [
-                    Text('買進 ≤ ${f2(p.maxEntry)}', style: small),
+                    Text('買進 ≤ ${f2(p.maxEntry)}', style: small?.copyWith(fontWeight: FontWeight.w600)),
                     Text('停損 ${f2(p.stop)}（−${p.riskPct.toStringAsFixed(1)}%）', style: small),
                     Text('目標 ${f2(p.target)}（+${((p.target / p.entry - 1) * 100).toStringAsFixed(1)}%）', style: small),
                     Text('R/R ${p.rr.toStringAsFixed(1)}', style: small),
-                    Text(sizeLabel(risk, p), style: small?.copyWith(fontWeight: FontWeight.w600)),
+                    if (p.strategy != Strategy.meanReversion) Text('+1R 後可加碼 ${f2(p.entry + p.risk)}', style: small),
                   ],
                 ),
               ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 卡片最上面：分數、代號名稱、機會類型、持有期間、策略、產業、價格。
+class _StockHead extends StatelessWidget {
+  final StockReport s;
+  final int? rank;
+  const _StockHead({required this.s, this.rank});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ScoreBadge(score: s.total, caption: '總分'),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  if (rank != null) RankBadge(rank: rank!),
+                  Flexible(
+                    child: Text(
+                      '${s.code} ${s.name}',
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 3),
+              Wrap(
+                spacing: 4,
+                runSpacing: 3,
+                children: [
+                  Tag(s.opportunity.label, opportunityColor(s.opportunity), filled: true),
+                  DurationTag(s.duration),
+                  for (final x in s.hits)
+                    StrategyTag(code: x.hit.strategy.code, label: x.hit.strategy.label, dimmed: !x.passed),
+                  if (s.industry != null)
+                    Tag(
+                      '${s.industry}${s.industryClass == null ? '' : '・${s.industryClass!.label}'}',
+                      industryClassColor(s.industryClass),
+                    ),
+                  if (s.rsRank != null) Tag('RS 第 ${s.rsRank} 名', Colors.blueGrey),
+                ],
+              ),
+            ],
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(f2(s.close), style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            Text(pctTxt(s.changePct), style: TextStyle(fontSize: 12, color: changeColor(context, s.changePct))),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// 觀察池：中長期好、等進場點。寫出什麼情況會變成可以買。
+class _WatchCard extends StatelessWidget {
+  final StockReport s;
+  const _WatchCard({required this.s});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => StockReportScreen(code: s.code))),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _StockHead(s: s),
+              const SizedBox(height: 8),
+              HorizonTriple(short: s.short, medium: s.medium, long: s.long),
+              const SizedBox(height: 6),
+              Text(s.opportunity.strategy, style: const TextStyle(fontSize: 12, height: 1.4)),
+              if (s.triggers.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                const Text('什麼情況會變成可以買', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                Bullets(s.triggers, BulletKind.info),
+              ],
+              if (s.warnings.isNotEmpty) Bullets([s.warnings.first], BulletKind.warn),
             ],
           ),
         ),

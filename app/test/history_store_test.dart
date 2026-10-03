@@ -116,4 +116,31 @@ void main() {
     expect(reopened.criteria.rsiMax, 30);
     expect(reopened.criteria.sort, ScreenSort.rsi);
   });
+
+  test('今天下午兩邊都還沒資料：當作還沒公布，不記成休市，晚點會再抓', () async {
+    final client = MockClient((req) async {
+      final isTwse = req.url.host.contains('twse');
+      final date = req.url.queryParameters['date']!;
+      if (date.contains('0930') || date.contains('09/30')) {
+        return http.Response.bytes(utf8.encode(jsonEncode(isTwse ? {'stat': '很抱歉，沒有符合條件的資料!'} : {'tables': []})), 200);
+      }
+      return http.Response.bytes(utf8.encode(jsonEncode(isTwse ? twse('2330', 100) : tpex('6488', 100))), 200);
+    });
+    final store = HistoryStore(
+      store: LocalStore(dir: tmp),
+      service: HistoryService(client: client),
+      requestGap: Duration.zero,
+    );
+    await store.load();
+    await store.setLookbackDays(3);
+    final afternoon = DateTime.utc(2026, 9, 30, 15, 30);
+    await store.sync(now: afternoon);
+    expect(store.missingDates(afternoon), ['2026-09-30']);
+    expect(store.lastError, contains('還沒公布'));
+    // 晚上 8 點以後還是沒資料，才當作休市記下來
+    final night = DateTime.utc(2026, 9, 30, 21);
+    await store.sync(now: night);
+    expect(store.missingDates(night), isEmpty);
+    expect(store.tradingDates, isNot(contains('2026-09-30')));
+  });
 }

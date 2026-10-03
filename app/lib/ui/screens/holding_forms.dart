@@ -9,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../../data/history_store.dart';
 import '../../data/holdings_store.dart';
 import '../../data/stock_catalog.dart';
+import '../../logic/engine/horizon.dart';
 import '../../logic/engine/signals.dart';
 import '../../logic/holding_eval.dart';
 import '../../models/holding.dart';
@@ -23,7 +24,24 @@ class PlanPrefill {
   final double? stop;
   final double? target;
   final String? reason;
-  const PlanPrefill({this.strategy, this.entry, this.stop, this.target, this.reason});
+
+  /// 買進當下的判斷（會存進持股，之後每天對照「理由還成立嗎」）。
+  final String? opportunity;
+  final int? duration;
+  final String? confidence;
+  final List<String> thesis;
+
+  const PlanPrefill({
+    this.strategy,
+    this.entry,
+    this.stop,
+    this.target,
+    this.reason,
+    this.opportunity,
+    this.duration,
+    this.confidence,
+    this.thesis = const [],
+  });
 }
 
 class AddHoldingPage extends StatefulWidget {
@@ -57,7 +75,7 @@ class _AddHoldingPageState extends State<AddHoldingPage> {
     _code = widget.code;
     _existing = _code == null ? null : context.read<HoldingsStore>().openFor(_code!);
     _date = ymd(taipeiNow());
-    _style = defaultStyleFor(widget.plan?.strategy);
+    _style = defaultStyleFor(widget.plan?.strategy, duration: widget.plan?.duration);
     final p = widget.plan;
     final last = _code == null
         ? null
@@ -125,6 +143,10 @@ class _AddHoldingPageState extends State<AddHoldingPage> {
             planTarget: p?.target,
             reason: p?.reason,
             note: _note.text.trim().isEmpty ? null : _note.text.trim(),
+            opportunity: widget.plan?.opportunity,
+            duration: widget.plan?.duration,
+            confidence: widget.plan?.confidence,
+            thesis: widget.plan?.thesis ?? const [],
           ),
         ),
       );
@@ -231,6 +253,23 @@ class _AddHoldingPageState extends State<AddHoldingPage> {
                         ),
                       ],
                     ),
+                  ),
+                ),
+              ],
+              if (existing == null && p?.duration != null) ...[
+                const SizedBox(height: 12),
+                SectionCard(
+                  title: '買進當下的判斷（會一起記下來）',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${p!.opportunity ?? ''}・預估 D${p.duration}（${kDurationRange[p.duration]}）・信心 ${p.confidence ?? '—'}',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                      if (p.thesis.isNotEmpty) Bullets(p.thesis.take(4).toList(), BulletKind.good),
+                      Text('之後每天會對照這些理由還成立嗎（健康度），持有期間會隨證據升級或降級。', style: Theme.of(context).textTheme.bodySmall),
+                    ],
                   ),
                 ),
               ],
@@ -480,12 +519,13 @@ class _EditHoldingPageState extends State<EditHoldingPage> {
     super.dispose();
   }
 
-  Future<void> _save() async {
+  Future<void> _save((bool, String)? check) async {
     final stop = parseInput(_stop.text);
     if (_style == HoldStyle.custom && stop == null) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('「自己設定」一定要填停損價')));
       return;
     }
+    if (check != null && check.$1) return;
     unawaited(
       context.read<HoldingsStore>().upsert(
         widget.holding.copyWith(
@@ -501,6 +541,10 @@ class _EditHoldingPageState extends State<EditHoldingPage> {
 
   @override
   Widget build(BuildContext context) {
+    final e = evalFor(context, widget.holding);
+    final check = styleUpgradeCheck(widget.holding, _style, e);
+    final customWhileLosing =
+        _style == HoldStyle.custom && widget.holding.style != HoldStyle.custom && (e.rNow ?? 0) < 0;
     return Scaffold(
       appBar: AppBar(title: const Text('修改持股設定')),
       body: Center(
@@ -523,6 +567,21 @@ class _EditHoldingPageState extends State<EditHoldingPage> {
               ),
               const SizedBox(height: 6),
               Text(_style.rules, style: Theme.of(context).textTheme.bodySmall),
+              if (check != null || customWhileLosing) ...[
+                const SizedBox(height: 8),
+                Card(
+                  color: check?.$1 ?? false
+                      ? Theme.of(context).colorScheme.errorContainer
+                      : Theme.of(context).colorScheme.secondaryContainer,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Text(
+                      check?.$2 ?? '這筆目前虧損：改成「自己設定」再把停損往下調，等於把虧損放大。只有在你很確定、並在備註寫下理由時才這樣做。',
+                      style: const TextStyle(fontSize: 13),
+                    ),
+                  ),
+                ),
+              ],
               const SizedBox(height: 12),
               TextField(
                 controller: _stop,
@@ -546,7 +605,7 @@ class _EditHoldingPageState extends State<EditHoldingPage> {
                 decoration: const InputDecoration(labelText: '備註'),
               ),
               const SizedBox(height: 20),
-              FilledButton(onPressed: _save, child: const Text('儲存')),
+              FilledButton(onPressed: check?.$1 ?? false ? null : () => _save(check), child: const Text('儲存')),
               const SizedBox(height: 8),
               const SectionCard(
                 child: Text(

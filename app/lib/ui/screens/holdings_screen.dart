@@ -1,4 +1,5 @@
-/// 「持股」：我投資了哪些股票，每天收盤後告訴我每一檔要保留、注意、出場還是停損。
+/// 「持股」：我投資了哪些股票，每天收盤後告訴我每一檔要續抱、注意、加碼、
+/// 先賣一半、出場還是停損；最上面是今日摘要和明天要盯的價位。
 library;
 
 import 'package:flutter/material.dart';
@@ -8,12 +9,14 @@ import '../../data/history_store.dart';
 import '../../data/holdings_store.dart';
 import '../../data/stock_catalog.dart';
 import '../../data/stock_industry.dart';
+import '../../logic/engine/horizon.dart';
 import '../../logic/holding_eval.dart';
 import '../../models/holding.dart';
 import '../format.dart';
 import '../holding_helpers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
+import '../widgets/horizon_widgets.dart';
 import '../widgets/score_widgets.dart';
 import '../widgets/sync_status.dart';
 import 'holding_detail_screen.dart';
@@ -34,15 +37,15 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     final holdings = context.watch<HoldingsStore>();
     final store = context.watch<HistoryStore>();
     final open = [for (final h in holdings.open) (h, evalFor(context, h))]
-      ..sort((a, b) => a.$2.state.urgency.compareTo(b.$2.state.urgency));
+      ..sort((a, b) => a.$2.action.index.compareTo(b.$2.action.index));
     final closed = holdings.closed;
     final stats = tradeStats(holdings.all);
+    final discipline = disciplineStats([for (final (_, e) in open) e, for (final h in closed) evalFor(context, h)]);
     var value = 0.0, unreal = 0.0;
     for (final (_, e) in open) {
       value += e.marketValue ?? 0;
       unreal += e.unrealized ?? 0;
     }
-    int count(HoldState s) => open.where((x) => x.$2.state == s).length;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(14, 14, 14, 80),
@@ -58,44 +61,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
         ),
         const SizedBox(height: 8),
         if (store.syncing || store.missingDates().isNotEmpty) const SyncStatusCard(),
-        if (open.isNotEmpty)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  StatGrid(
-                    bare: true,
-                    stats: [
-                      ('持有', '${open.length} 檔', null),
-                      ('市值', f0(value), null),
-                      ('未實現損益', moneyTxt(unreal), changeColor(context, unreal)),
-                      ('已實現損益', moneyTxt(stats.realized), changeColor(context, stats.realized)),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      for (final s in [HoldState.stopLoss, HoldState.exit, HoldState.watch, HoldState.hold])
-                        if (count(s) > 0)
-                          Row(mainAxisSize: MainAxisSize.min, children: [StateChip(s), Text(' ${count(s)} 檔')]),
-                    ],
-                  ),
-                  if (count(HoldState.stopLoss) + count(HoldState.exit) > 0)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 8),
-                      child: Text(
-                        '今天有 ${count(HoldState.stopLoss) + count(HoldState.exit)} 檔需要處理，排在最上面。',
-                        style: TextStyle(color: stateColor(HoldState.stopLoss), fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-          ),
+        if (open.isNotEmpty) _TodaySummary(open: open, value: value, unreal: unreal, realized: stats.realized),
         const SizedBox(height: 6),
         FilledButton.icon(
           onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddHoldingPage())),
@@ -109,9 +75,12 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
             child: Bullets([
               '按「新增持股」填股票、買進價、股數、日期，或在推薦的個股報告按「我已進場」，自動帶入停損和目標。',
               '選持有方式：短線、波段、長期或自己設定，每種有不同的停損和出場規則。',
-              '每天收盤資料更新後，每一檔會自動標成：保留、注意、建議出場、停損，並寫出理由。',
+              '每天收盤資料更新後，每一檔會給一個持續建議：續抱、續抱但注意、可以加碼、先賣一半、出場、停損，並寫出原因。',
+              '從買進那天起每個交易日都有一筆紀錄：收盤、損益、停損、當天發生的事、建議和原因。',
+              '每天檢查「買進理由還成立嗎」（健康度），理由一項項失效時，跌破停損前就先提醒。',
+              '明日劇本：收盤在哪個價位該做什麼，前一晚就知道。',
               '停損只會往上調、不會往下；只加贏家，虧損時加碼會警告「禁止向下攤平」。',
-              '賣出時記錄下來，累積成你自己的交易紀錄和績效。',
+              '賣出時記錄下來，累積成你自己的交易紀錄、績效和紀律分數。',
             ], BulletKind.info),
           ),
         for (final (h, e) in open) _HoldingCard(h: h, e: e),
@@ -136,6 +105,7 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                     ('已實現合計', moneyTxt(stats.realized), changeColor(context, stats.realized)),
                   ],
                 ),
+                if (!discipline.isEmpty) ...[const SizedBox(height: 8), _DisciplineRow(d: discipline)],
                 if (_showClosed) ...[const SizedBox(height: 8), for (final h in closed) _ClosedRow(h: h)],
               ],
             ),
@@ -156,13 +126,13 @@ class _HoldingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final small = Theme.of(context).textTheme.bodySmall;
-    final c = stateColor(e.state);
+    final c = actionColor(e.action);
     return Card(
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(
-          color: e.state == HoldState.hold ? Theme.of(context).colorScheme.outlineVariant : c,
-          width: e.state == HoldState.hold ? 1 : 2,
+          color: e.action == DailyAction.hold ? Theme.of(context).colorScheme.outlineVariant : c,
+          width: e.action == DailyAction.hold ? 1 : 2,
         ),
       ),
       clipBehavior: Clip.antiAlias,
@@ -175,7 +145,7 @@ class _HoldingCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  StateChip(e.state),
+                  ActionTag(e.action),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -187,13 +157,26 @@ class _HoldingCard extends StatelessWidget {
                   Tag(h.style.label, Colors.blueGrey),
                 ],
               ),
+              if (e.health != null || e.durationNow != null) ...[
+                const SizedBox(height: 4),
+                Wrap(
+                  spacing: 4,
+                  runSpacing: 3,
+                  children: [
+                    if (e.health != null) HealthTag(e.health!),
+                    if (e.durationNow != null)
+                      Tag('D${e.durationNow} ${kDurationRange[e.durationNow]}', Colors.blueGrey),
+                    if (e.summary != null) Tag('持有第 ${e.summary!.days} 天', Colors.blueGrey),
+                  ],
+                ),
+              ],
               const SizedBox(height: 6),
               Text(
                 e.headline,
                 style: TextStyle(
                   fontSize: 13,
                   fontWeight: FontWeight.w600,
-                  color: e.state == HoldState.hold ? null : c,
+                  color: e.action == DailyAction.hold ? null : c,
                 ),
               ),
               if (e.addOn != null)
@@ -237,6 +220,102 @@ class _ClosedRow extends StatelessWidget {
         '${h.firstBuyDate} 買 → ${h.lastSellDate} 賣 · ${h.sells.map((s) => s.reason ?? '').where((x) => x.isNotEmpty).join('、')}',
       ),
       trailingTop: Text(moneyTxt(r), style: TextStyle(color: changeColor(context, r))),
+    );
+  }
+}
+
+/// 今日摘要：總覽數字、依建議分組的持股、明天要盯的價位。
+class _TodaySummary extends StatelessWidget {
+  final List<(Holding, HoldingEval)> open;
+  final double value, unreal, realized;
+  const _TodaySummary({required this.open, required this.value, required this.unreal, required this.realized});
+
+  @override
+  Widget build(BuildContext context) {
+    String name(Holding h) => '${h.code} ${kBuiltinStocksByCode[h.code]?.name ?? ''}'.trim();
+    final groups = <DailyAction, List<Holding>>{};
+    for (final (h, e) in open) {
+      (groups[e.action] ??= []).add(h);
+    }
+    final urgent = open.where((x) => x.$2.action.needsAction).length;
+    final watchLines = <String>[];
+    for (final (h, e) in open) {
+      if (e.scenario.isEmpty) continue;
+      final s = e.scenario.first;
+      watchLines.add('${name(h)}：${s.when} → ${s.action}');
+    }
+    final small = Theme.of(context).textTheme.bodySmall;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('今日摘要', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 6),
+            StatGrid(
+              bare: true,
+              stats: [
+                ('持有', '${open.length} 檔', null),
+                ('市值', f0(value), null),
+                ('未實現損益', moneyTxt(unreal), changeColor(context, unreal)),
+                ('已實現損益', moneyTxt(realized), changeColor(context, realized)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              urgent > 0 ? '今天有 $urgent 檔需要處理（排在最上面）' : '今天沒有需要出場的持股',
+              style: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: urgent > 0 ? actionColor(DailyAction.stopLoss) : actionColor(DailyAction.hold),
+              ),
+            ),
+            const SizedBox(height: 6),
+            for (final a in DailyAction.values)
+              if (groups[a] != null)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 132,
+                        child: Align(alignment: Alignment.centerLeft, child: ActionTag(a)),
+                      ),
+                      Expanded(child: Text(groups[a]!.map(name).join('、'), style: const TextStyle(fontSize: 13))),
+                    ],
+                  ),
+                ),
+            if (watchLines.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Text('明天要盯的價位', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              for (final l in watchLines.take(6)) Text('• $l', style: small?.copyWith(fontSize: 12)),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DisciplineRow extends StatelessWidget {
+  final DisciplineStats d;
+  const _DisciplineRow({required this.d});
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = <String>[
+      if (d.judged > 0) '出場訊號準時處理 ${d.onTime}／${d.judged}（${(d.rate * 100).toStringAsFixed(0)}%）',
+      if (d.late > 0) '晚處理平均晚 ${d.avgDelay.toStringAsFixed(1)} 天、多賠約 ${f0(d.lateCost)} 元',
+      if (d.pending > 0) '${d.pending} 個出場訊號還沒處理',
+      if (d.early > 0) '${d.early} 次在訊號前自己先賣',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('你的紀律', style: TextStyle(fontWeight: FontWeight.w600)),
+        Text(parts.join('；'), style: const TextStyle(fontSize: 13)),
+      ],
     );
   }
 }
