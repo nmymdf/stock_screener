@@ -64,10 +64,9 @@ jobs:
           a=${YEARS%-*}; b=${YEARS#*-}
           items=""
           for y in $(seq $a $b); do
-            tpex=false; compact=false
+            tpex=false
             [ $y -ge $((now-2)) ] && tpex=true
-            [ $y -le $((now-3)) ] && compact=true
-            items="$items{\"year\":$y,\"tpex\":$tpex,\"compact\":$compact},"
+            items="$items{\"year\":$y,\"tpex\":$tpex},"
           done
           echo "matrix={\"include\":[${items%,}]}" >> "$GITHUB_OUTPUT"
         env:
@@ -79,6 +78,7 @@ jobs:
     timeout-minutes: 180
     strategy:
       fail-fast: false
+      max-parallel: 7
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
@@ -90,13 +90,14 @@ jobs:
       - run: flutter pub get
         working-directory: app
       - name: 下載已經有的部分（中斷過的話接著抓）
-        run: gh release download data --pattern "daily-${{ matrix.year }}.json.gz" --dir app/pack || true
-      - run: dart run tool/datapack.dart year --year ${{ matrix.year }} --dir pack ${{ matrix.tpex && '--tpex' || '' }} ${{ matrix.compact && '--compact' || '' }}
+        run: gh release download data --pattern "raw-${{ matrix.year }}.json.gz" --dir app/pack || true
+      - run: dart run tool/datapack.dart year --year ${{ matrix.year }} --dir pack ${{ matrix.tpex && '--tpex' || '' }}
         working-directory: app
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: daily-${{ matrix.year }}
-          path: app/pack/daily-${{ matrix.year }}.json.gz
+          name: raw-${{ matrix.year }}
+          path: app/pack/raw-${{ matrix.year }}.json.gz
           retention-days: 3
 
   backfill-extra:
@@ -117,11 +118,12 @@ jobs:
           gh release download data --pattern "dividends.json.gz" --dir app/pack || true
       - run: |
           set -e
-          dart run tool/datapack.dart revenue --dir pack --from 2012-01
+          dart run tool/datapack.dart revenue --dir pack --from 2013-01
           dart run tool/datapack.dart dividends --dir pack --years 2012-$(TZ=Asia/Taipei date +%Y)
           dart run tool/datapack.dart intl --dir pack
         working-directory: app
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: extra
           path: |
@@ -132,7 +134,7 @@ jobs:
 
   publish:
     needs: [backfill, backfill-extra]
-    if: ${{ !cancelled() && inputs.mode == 'backfill' }}
+    if: ${{ always() && inputs.mode == 'backfill' }}
     runs-on: ubuntu-latest
     concurrency:
       group: datapack-write
@@ -165,6 +167,7 @@ jobs:
             --prerelease --latest=false --target "${{ github.sha }}"
           gh release upload data app/pack/*.json.gz app/pack/manifest.json --clobber
       - run: dart run tool/datapack.dart research --dir pack
+        if: always()
         working-directory: app
 
   daily:

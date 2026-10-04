@@ -1,11 +1,11 @@
 // 資料包產生程式：在 GitHub Actions 上跑（App 所在的電腦不用跑）。
 //
 //   dart run tool/datapack.dart probe                       # 試抓每個來源，印出解析結果
-//   dart run tool/datapack.dart year --year 2024 --dir pack [--tpex] [--compact]
-//   dart run tool/datapack.dart revenue --dir pack --from 2012-01
+//   dart run tool/datapack.dart year --year 2024 --dir pack [--tpex]
+//   dart run tool/datapack.dart revenue --dir pack --from 2013-01
 //   dart run tool/datapack.dart dividends --dir pack --years 2013-2026
 //   dart run tool/datapack.dart intl --dir pack
-//   dart run tool/datapack.dart assemble --dir pack         # 產生 recent.json.gz、manifest.json
+//   dart run tool/datapack.dart assemble --dir pack         # 產生 App 用的 lt-/bars-/recent、manifest.json
 //   dart run tool/datapack.dart daily --dir pack            # 每天收盤後：補今年、營收、股利、國際、組裝
 //   dart run tool/datapack.dart research --dir pack         # 用資料包跑長期回測，印出結果
 //
@@ -37,9 +37,9 @@ Future<void> main(List<String> argv) async {
         await probe(f);
       case 'year':
         final y = int.parse(args.get('year')!);
-        await updateYear(f, dir, y, tpex: args.flag('tpex'), compact: args.flag('compact'));
+        await updateYear(f, dir, y, tpex: args.flag('tpex'));
       case 'revenue':
-        await updateRevenue(f, dir, from: args.get('from') ?? '2012-01', full: args.flag('full'));
+        await updateRevenue(f, dir, from: args.get('from') ?? '2013-01', full: args.flag('full'));
       case 'dividends':
         final (a, b) = _range(args.get('years') ?? '${_taipeiNow().year}');
         await updateDividends(f, dir, a, b);
@@ -149,10 +149,10 @@ String _compact(String date) => date.replaceAll('-', '');
 
 Uri _twse(String path, Map<String, String> q) => Uri.https('www.twse.com.tw', path, {...q, 'response': 'json'});
 
-/// 證交所的「查無資料」：stat 不是 OK，或沒有任何表格。
-bool _twseEmpty(Map<String, dynamic> body) {
+/// 證交所的「查無資料」（休市）。其他不是 OK 的回應（例如請稍後再試）不能當成休市，下次要重抓。
+bool _twseNoData(Map<String, dynamic> body) {
   final stat = body['stat']?.toString() ?? '';
-  return stat.contains('沒有符合') || stat.contains('查詢無資料') || twseTables(body).isEmpty;
+  return stat.contains('沒有符合') || stat.contains('查詢無資料');
 }
 
 class DayParts {
@@ -261,7 +261,7 @@ Future<void> probe(Fetcher f) async {
 
 // ───────────────────────────── 每日行情 ─────────────────────────────
 
-File _yearFile(Directory dir, int y) => File('${dir.path}/daily-$y.json.gz');
+File _yearFile(Directory dir, int y) => File('${dir.path}/raw-$y.json.gz');
 
 PackYear loadYear(Directory dir, int y) {
   final file = _yearFile(dir, y);
@@ -283,7 +283,7 @@ List<String> weekdaysOf(int year) {
   return out;
 }
 
-Future<void> updateYear(Fetcher f, Directory dir, int year, {bool tpex = false, bool compact = false}) async {
+Future<void> updateYear(Fetcher f, Directory dir, int year, {bool tpex = false}) async {
   final py = loadYear(dir, year);
   final now = _taipeiNow();
   final todayStr = _ymd(now);
@@ -307,12 +307,19 @@ Future<void> updateYear(Fetcher f, Directory dir, int year, {bool tpex = false, 
       }
       continue;
     }
-    fails = 0;
-    if (_twseEmpty(mi) || parseTwseDaily(date, mi).isEmpty) {
-      // 今天還沒公布不算休市
-      if (date != todayStr) py.closed.add(date);
+    final bars = parseTwseDaily(date, mi);
+    if (bars.isEmpty) {
+      if (_twseNoData(mi)) {
+        fails = 0;
+        // 今天還沒公布不算休市
+        if (date != todayStr) py.closed.add(date);
+      } else {
+        fails++;
+        print('  $date：回應不正常（${mi['stat']}），之後再抓');
+      }
       continue;
     }
+    fails = 0;
     py.days[date] = await _fetchRest(f, date, mi, tpex: tpex, py: py);
     n++;
     if (n % 20 == 0) {
@@ -328,12 +335,6 @@ Future<void> updateYear(Fetcher f, Directory dir, int year, {bool tpex = false, 
       continue;
     }
     py.days[date] = await _fillParts(f, day, py.partial[date]!, py);
-  }
-  if (compact) {
-    for (final e in py.days.entries.toList()) {
-      py.days[e.key] = e.value.compacted();
-    }
-    py.partial.removeWhere((_, v) => v.length == 1 && v.first == 'o');
   }
   saveYear(dir, py);
   print('$year：完成，共 ${py.days.length} 個交易日（新抓 $n 天），${f.requests} 次請求');
@@ -455,7 +456,7 @@ File _revFile(Directory dir) => File('${dir.path}/revenue.json.gz');
 
 Future<void> updateRevenue(Fetcher f, Directory dir, {required String from, bool full = false}) async {
   final file = _revFile(dir);
-  final rev = file.existsSync() ? RevenueData.fromJson(decodeGz(file.readAsBytesSync())) : RevenueData(from, null);
+  final rev = file.existsSync() ? RevenueData.fromJson(decodeGz(file.readAsBytesSync())) : RevenueData(from);
   final now = _taipeiNow();
   final lastIdx = now.year * 12 + now.month - 2; // 上個月
   final firstIdx = RevenueData.monthIndex(from);
@@ -465,7 +466,6 @@ Future<void> updateRevenue(Fetcher f, Directory dir, {required String from, bool
     // 最近 3 個月每天重抓（公司陸續公布、會更正）；更早的有 600 家以上就不再抓
     final recent = k > lastIdx - 3;
     if (!full && !recent && rev.countFor(ym) >= 600) continue;
-    if (!full && !recent && k < RevenueData.monthIndex('2013-01') && rev.countFor(ym) >= 300) continue;
     final m = await fetchRevenueMonth(f, ym);
     if (m.isEmpty) {
       print('  $ym：抓不到');
@@ -481,7 +481,7 @@ Future<void> updateRevenue(Fetcher f, Directory dir, {required String from, bool
     print('  OpenAPI $ym：${latest.length} 家');
   }
   file.writeAsBytesSync(encodeGz(rev.toJson()));
-  print('營收：更新 $n 個月，最新 ${rev.lastMonth}，${rev.byCode.length} 家公司');
+  print('營收：更新 $n 個月，最新 ${rev.lastMonth}，${rev.cur.length} 家公司');
 }
 
 // ───────────────────────────── 除權息 ─────────────────────────────
@@ -583,36 +583,62 @@ Future<void> updateIntl(Fetcher f, Directory dir) async {
 
 // ───────────────────────────── 組裝 ─────────────────────────────
 
+/// 內容有變才寫檔（檔案時間不變，每日工作就不會重傳沒變的檔案）。回傳寫入後的位元組。
+List<int> _writeIfChanged(File file, Map<String, dynamic> json) {
+  final text = jsonEncode(json);
+  if (file.existsSync()) {
+    try {
+      final old = file.readAsBytesSync();
+      if (utf8.decode(gzip.decode(old)) == text) return old;
+    } catch (_) {}
+  }
+  final bytes = gzip.encode(utf8.encode(text));
+  file.writeAsBytesSync(bytes);
+  return bytes;
+}
+
+/// 由各年的原始檔產生 App 下載用的檔案：lt-YYYY（長期分析）、bars-YYYY（最近三年的每日行情）、
+/// recent（最近 30 個交易日）、manifest.json。
 void assemble(Directory dir, {int recentDays = 30}) {
+  final re = RegExp(r'raw-(\d{4})\.json\.gz$');
   final years = [
     for (final f in dir.listSync().whereType<File>())
-      if (RegExp(r'daily-(\d{4})\.json\.gz$').hasMatch(f.path))
-        int.parse(RegExp(r'daily-(\d{4})\.json\.gz$').firstMatch(f.path)!.group(1)!),
+      if (re.hasMatch(f.path)) int.parse(re.firstMatch(f.path)!.group(1)!),
   ]..sort();
+  final nowYear = _taipeiNow().year;
   final files = <String, PackFileInfo>{};
   final recent = <PackDay>[];
   final names = <String, String>{};
   String? lastDate;
   for (final y in years.reversed) {
     final py = loadYear(dir, y);
-    final bytes = _yearFile(dir, y).readAsBytesSync();
-    files['daily-$y.json.gz'] = PackFileInfo(
-      'daily-$y.json.gz',
-      bytes.length,
-      fingerprint(bytes),
+    if (py.days.isEmpty) continue;
+    final lt = _writeIfChanged(File('${dir.path}/lt-$y.json.gz'), ltYearJson(py));
+    files['lt-$y.json.gz'] = PackFileInfo(
+      'lt-$y.json.gz',
+      lt.length,
+      fingerprint(lt),
       first: py.firstDate,
       last: py.lastDate,
     );
+    if (y >= nowYear - 2) {
+      final bars = _writeIfChanged(File('${dir.path}/bars-$y.json.gz'), barsYearJson(py));
+      files['bars-$y.json.gz'] = PackFileInfo(
+        'bars-$y.json.gz',
+        bars.length,
+        fingerprint(bars),
+        first: py.firstDate,
+        last: py.lastDate,
+      );
+    }
     lastDate ??= py.lastDate;
     if (recent.length < recentDays) {
-      final days = py.sortedDays.reversed.take(recentDays - recent.length);
-      recent.addAll(days);
+      recent.addAll(py.sortedDays.reversed.take(recentDays - recent.length));
       names.addAll({...py.names, ...names});
     }
   }
   recent.sort((a, b) => a.date.compareTo(b.date));
-  final rb = encodeGz(RecentPack(recent, names).toJson());
-  File('${dir.path}/recent.json.gz').writeAsBytesSync(rb);
+  final rb = _writeIfChanged(File('${dir.path}/recent.json.gz'), RecentPack(recent, names).toJson());
   files['recent.json.gz'] = PackFileInfo(
     'recent.json.gz',
     rb.length,
@@ -628,11 +654,21 @@ void assemble(Directory dir, {int recentDays = 30}) {
     if (n == 'revenue.json.gz') last = RevenueData.fromJson(decodeGz(b)).lastMonth;
     files[n] = PackFileInfo(n, b.length, fingerprint(b), last: last);
   }
-  final m = PackManifest(DateTime.now().toUtc().toIso8601String(), lastDate, files);
-  File('${dir.path}/manifest.json').writeAsStringSync(const JsonEncoder.withIndent(' ').convert(m.toJson()));
-  print(
-    '組裝完成：最新 $lastDate，${files.length} 個檔案，共 ${(files.values.fold(0, (s, x) => s + x.size) / 1e6).toStringAsFixed(1)} MB',
-  );
+  final manifestFile = File('${dir.path}/manifest.json');
+  final old = manifestFile.existsSync()
+      ? PackManifest.fromJson(jsonDecode(manifestFile.readAsStringSync()) as Map<String, dynamic>)
+      : null;
+  final same =
+      old != null &&
+      old.lastDate == lastDate &&
+      old.files.length == files.length &&
+      files.entries.every((e) => old.files[e.key]?.hash == e.value.hash);
+  if (!same) {
+    final m = PackManifest(DateTime.now().toUtc().toIso8601String(), lastDate, files);
+    manifestFile.writeAsStringSync(const JsonEncoder.withIndent(' ').convert(m.toJson()));
+  }
+  final total = files.values.fold(0, (s, x) => s + x.size);
+  print('組裝完成：最新 $lastDate，App 用 ${files.length} 個檔案共 ${(total / 1e6).toStringAsFixed(1)} MB${same ? '（沒有變動）' : ''}');
   for (final e in files.entries) {
     print('  ${e.key} ${(e.value.size / 1e3).toStringAsFixed(0)} KB ${e.value.first ?? ''}～${e.value.last ?? ''}');
   }
@@ -643,7 +679,7 @@ Future<void> daily(Fetcher f, Directory dir) async {
   final now = _taipeiNow();
   if (now.month == 1 && now.day <= 15) await updateYear(f, dir, now.year - 1, tpex: true);
   await updateYear(f, dir, now.year, tpex: true);
-  await updateRevenue(f, dir, from: '2012-01');
+  await updateRevenue(f, dir, from: '2013-01');
   await updateDividends(f, dir, now.year, now.year);
   await updateIntl(f, dir);
   assemble(dir);

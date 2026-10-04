@@ -188,14 +188,17 @@ void main() {
     expect(c.snapshot(), isNull);
   });
 
-  test('營收資料：用去年當月營收補缺、最後一個月、壓縮存檔', () {
-    final r = RevenueData('2012-01', null);
+  test('營收資料：同一份報表的當月與去年同月一起存，舊格式不沿用', () {
+    final r = RevenueData('2013-01');
     r.addMonth('2013-03', {'2330': (100.0, 80.0)});
-    expect(r.at('2330', RevenueData.monthIndex('2013-03')), 100);
-    expect(r.at('2330', RevenueData.monthIndex('2012-03')), 80);
+    final k = RevenueData.monthIndex('2013-03');
+    expect(r.at('2330', k), 100);
+    expect(r.lastYearAt('2330', k), 80);
     expect(r.lastMonth, '2013-03');
+    expect(r.lastIdxOf('2330'), k);
     final back = RevenueData.fromJson(decodeGz(encodeGz(r.toJson())));
-    expect(back.at('2330', RevenueData.monthIndex('2012-03')), 80);
+    expect(back.lastYearAt('2330', k), 80);
     expect(back.countFor('2013-03'), 1);
+    expect(RevenueData.fromJson({'v': 1, 'start': '2012-01', 'data': {}}).cur, isEmpty);
   });
 }

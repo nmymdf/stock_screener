@@ -206,14 +206,22 @@ class PackYear {
 }
 
 /// 上市公司每月營收（千元）。
+///
+/// 每個月同時存「當月營收」和那份報表裡的「去年當月營收」：年增率一律用同一份報表的
+/// 兩個數字算，2013 年改用合併營收前後的基準才會一致，而且就是當時投資人看到的年增率。
 class RevenueData {
   /// 第一個月 yyyy-MM。
   final String start;
 
-  /// 代號 → 從 [start] 開始每個月的營收，沒有是 null。
-  final Map<String, List<double?>> byCode;
+  /// 代號 → 從 [start] 開始每個月的當月營收，沒有是 null。
+  final Map<String, List<double?>> cur;
 
-  RevenueData(this.start, Map<String, List<double?>>? byCode) : byCode = byCode ?? {};
+  /// 代號 → 同一份報表的「去年當月營收」。
+  final Map<String, List<double?>> ly;
+
+  RevenueData(this.start, {Map<String, List<double?>>? cur, Map<String, List<double?>>? ly})
+    : cur = cur ?? {},
+      ly = ly ?? {};
 
   static int monthIndex(String ym) => int.parse(ym.substring(0, 4)) * 12 + int.parse(ym.substring(5, 7)) - 1;
   static String monthOf(int idx) => '${idx ~/ 12}-${(idx % 12 + 1).toString().padLeft(2, '0')}';
@@ -223,7 +231,7 @@ class RevenueData {
   /// 有資料的最後一個月。
   String? get lastMonth {
     var best = -1;
-    for (final l in byCode.values) {
+    for (final l in cur.values) {
       for (var k = l.length - 1; k > best; k--) {
         if (l[k] != null) {
           best = k;
@@ -238,49 +246,166 @@ class RevenueData {
   int countFor(String ym) {
     final k = monthIndex(ym) - startIdx;
     if (k < 0) return 0;
-    return byCode.values.where((l) => k < l.length && l[k] != null).length;
+    return cur.values.where((l) => k < l.length && l[k] != null).length;
   }
 
-  double? at(String code, int monthIdx) {
-    final l = byCode[code];
-    final k = monthIdx - startIdx;
+  static double? _at(Map<String, List<double?>> m, String code, int k) {
+    final l = m[code];
     if (l == null || k < 0 || k >= l.length) return null;
     return l[k];
   }
 
-  void put(String code, int monthIdx, double v) {
-    final k = monthIdx - startIdx;
+  /// 某個月的當月營收。
+  double? at(String code, int monthIdx) => _at(cur, code, monthIdx - startIdx);
+
+  /// 某個月報表裡的去年同月營收。
+  double? lastYearAt(String code, int monthIdx) => _at(ly, code, monthIdx - startIdx);
+
+  /// 這檔股票有資料的最後一個月（沒有回傳 null）。
+  int? lastIdxOf(String code) {
+    final l = cur[code];
+    if (l == null) return null;
+    for (var k = l.length - 1; k >= 0; k--) {
+      if (l[k] != null) return startIdx + k;
+    }
+    return null;
+  }
+
+  static void _put(Map<String, List<double?>> m, String code, int k, double? v) {
     if (k < 0) return;
-    final l = byCode[code] ??= [];
+    final l = m[code] ??= [];
     while (l.length <= k) {
       l.add(null);
     }
     l[k] = v;
   }
 
-  /// 加入一個月的營收；順便用「去年當月營收」補上去年同月缺的資料。
   void addMonth(String ym, MonthRevenue m) {
-    final idx = monthIndex(ym);
+    final k = monthIndex(ym) - startIdx;
     for (final e in m.entries) {
-      put(e.key, idx, e.value.$1);
+      _put(cur, e.key, k, e.value.$1);
       final p = e.value.$2;
-      if (p != null && p > 0 && at(e.key, idx - 12) == null) put(e.key, idx - 12, p);
+      _put(ly, e.key, k, p != null && p > 0 ? p : null);
     }
   }
 
-  Map<String, dynamic> toJson() => {
-    'v': 1,
-    'start': start,
-    'data': {
-      for (final e in byCode.entries) e.key: [for (final x in e.value) x == null ? null : packNum(x, 0)],
-    },
-  };
+  Map<String, dynamic> toJson() {
+    List<num?> pack(List<double?> l) => [for (final x in l) x == null ? null : packNum(x, 0)];
+    return {
+      'v': 2,
+      'start': start,
+      'cur': {for (final e in cur.entries) e.key: pack(e.value)},
+      'ly': {for (final e in ly.entries) e.key: pack(e.value)},
+    };
+  }
 
-  static RevenueData fromJson(Map<String, dynamic> j) => RevenueData(j['start'] as String, {
-    for (final e in ((j['data'] as Map?) ?? const {}).entries)
-      e.key as String: [for (final x in e.value as List) (x as num?)?.toDouble()],
-  });
+  static RevenueData fromJson(Map<String, dynamic> j) {
+    Map<String, List<double?>> read(Object? m) => {
+      for (final e in ((m as Map?) ?? const {}).entries)
+        e.key as String: [for (final x in e.value as List) (x as num?)?.toDouble()],
+    };
+    if ((j['v'] as num?) != 2) return RevenueData('2013-01'); // 舊格式不用，重抓
+    return RevenueData(j['start'] as String, cur: read(j['cur']), ly: read(j['ly']));
+  }
 }
+
+/// 每月檢視日：每個月 11 日以後（月營收 10 日前公布完）的第一個交易日。
+/// [dates] 要由舊到新排好，回傳是檢視日的位置。
+List<int> sampleDayIndexes(List<String> dates) {
+  final out = <int>[];
+  var lastMonth = '';
+  for (var k = 0; k < dates.length; k++) {
+    final d = dates[k];
+    final ym = d.substring(0, 7);
+    if (ym != lastMonth && int.parse(d.substring(8, 10)) >= 11) {
+      lastMonth = ym;
+      out.add(k);
+    }
+  }
+  return out;
+}
+
+/// App 用的長期資料檔（lt-YYYY.json.gz）：只有上市普通股，依股票分欄，
+/// 只留收盤、張數、法人（外資、投信），本益比這類每月檢視日才存。
+/// 除權息只記「可能有事件」那幾天的漲跌價差，其他天參考價就是前一天收盤。
+Map<String, dynamic> ltYearJson(PackYear raw) {
+  final days = raw.sortedDays;
+  final n = days.length;
+  final close = <String, List<num?>>{};
+  final lots = <String, List<int>>{};
+  final fi = <String, List<int>>{};
+  final it = <String, List<int>>{};
+  final chg = <String, List<List<num>>>{};
+  final prev = <String, double>{};
+  for (var k = 0; k < n; k++) {
+    final d = days[k];
+    for (final e in d.twse.entries) {
+      final code = e.key;
+      if (!isCommonStockCode(code)) continue;
+      final row = e.value;
+      final c = row.close;
+      if (c <= 0) continue;
+      (close[code] ??= List<num?>.filled(n, null))[k] = packNum(c);
+      (lots[code] ??= List<int>.filled(n, 0))[k] = row.lots;
+      final inst = d.inst[code];
+      if (inst != null) {
+        if (inst[0] != 0) (fi[code] ??= List<int>.filled(n, 0))[k] = inst[0];
+        if (inst.length > 1 && inst[1] != 0) (it[code] ??= List<int>.filled(n, 0))[k] = inst[1];
+      }
+      final ch = row.change;
+      final p = prev[code];
+      if (ch != null && (p == null || (c - p - ch).abs() >= 0.006)) {
+        (chg[code] ??= []).add([k, packNum(ch)]);
+      }
+      prev[code] = c;
+    }
+  }
+  final val = <String, Map<String, List<num?>>>{};
+  final dates = [for (final d in days) d.date];
+  for (final k in sampleDayIndexes(dates)) {
+    // 檢視日那天沒抓到的話，用同一個月之後最近一天的
+    for (var j = k; j < n && dates[j].substring(0, 7) == dates[k].substring(0, 7); j++) {
+      if (days[j].val.isEmpty) continue;
+      val[dates[k]] = {
+        for (final e in days[j].val.entries)
+          if (close.containsKey(e.key)) e.key: e.value,
+      };
+      break;
+    }
+  }
+  return {
+    'v': 1,
+    'year': raw.year,
+    'dates': dates,
+    'ix': [for (final d in days) d.taiex == null ? null : packNum(d.taiex!)],
+    'tr': [for (final d in days) d.tri == null ? null : packNum(d.tri!)],
+    'names': {
+      for (final c in close.keys)
+        if (raw.names[c] != null) c: raw.names[c],
+    },
+    's': {
+      for (final c in close.keys)
+        c: {
+          'c': close[c],
+          'v': lots[c],
+          if (fi[c] != null) 'f': fi[c],
+          if (it[c] != null) 'i': it[c],
+          if (chg[c] != null) 'x': chg[c],
+        },
+    },
+    'val': val,
+  };
+}
+
+/// App 匯入「每日行情」用的檔案（bars-YYYY.json.gz）：上市＋上櫃每天的開高低收量。
+Map<String, dynamic> barsYearJson(PackYear raw) => {
+  'v': 1,
+  'year': raw.year,
+  'days': [
+    for (final d in raw.sortedDays)
+      if (d.snapshot() case final snap?) snap.toJson(),
+  ],
+};
 
 class DividendData {
   final Map<String, List<DivEvent>> byCode;
