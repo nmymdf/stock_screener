@@ -90,7 +90,7 @@ class HistoryService {
 /// 解析證交所 MI_INDEX 的回應。新版格式是 `tables: [{fields, data}, ...]`，
 /// 舊版是 `fields9` / `data9` 這種帶編號的鍵，兩種都認。
 Map<String, DailyBar> parseTwseDaily(String date, Map<String, dynamic> body) {
-  for (final (fields, data) in _twseTables(body)) {
+  for (final (fields, data) in twseTables(body)) {
     final cols = _Columns.find(fields);
     if (cols != null) return cols.parse(date, data);
   }
@@ -99,7 +99,7 @@ Map<String, DailyBar> parseTwseDaily(String date, Map<String, dynamic> body) {
 
 /// 從證交所 MI_INDEX 的「價格指數」表找出發行量加權股價指數的收盤。
 double? parseTaiex(Map<String, dynamic> body) {
-  for (final (fields, data) in _twseTables(body)) {
+  for (final (fields, data) in twseTables(body)) {
     final names = [for (final f in fields) f.toString().replaceAll(RegExp(r'\s'), '')];
     final nameCol = names.indexWhere((n) => n == '指數');
     final closeCol = names.indexWhere((n) => n.contains('收盤指數'));
@@ -113,7 +113,8 @@ double? parseTaiex(Map<String, dynamic> body) {
   return null;
 }
 
-List<(List, List)> _twseTables(Map<String, dynamic> body) {
+/// 證交所回應裡所有的 (欄位名稱, 資料) 表格，新版 `tables` 和舊版 `fieldsN`／`dataN` 都認。
+List<(List, List)> twseTables(Map<String, dynamic> body) {
   final tables = <(List, List)>[];
   final t = body['tables'];
   if (t is List) {

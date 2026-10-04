@@ -1,0 +1,217 @@
+name: 資料包（每天收盤後更新）
+
+# 長期分析需要好幾年的收盤、本益比、殖利率、法人、月營收、除權息、國際指標。
+# 這些資料由 GitHub 的伺服器每天晚上抓好、打包，放在 Releases 的「data」裡，
+# App 第一次下載完整資料包，之後每天只下載最近 30 天的小檔。
+#
+# - 每個交易日台北時間 21:27 自動執行（清晨 06:17 再跑一次補漏）。
+# - 手動執行可以選 backfill（回補歷年資料，每年一個工作同時跑）、probe（試抓）、research（跑回測）。
+on:
+  schedule:
+    - cron: "27 13 * * 1-5"
+    - cron: "17 22 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "daily＝每日更新、backfill＝回補歷年、probe＝試抓、research＝跑長期回測"
+        type: choice
+        options: [daily, backfill, probe, research]
+        default: daily
+      years:
+        description: "回補哪幾年（例如 2013-2026）"
+        default: "2013-2026"
+  push:
+    paths:
+      - ".github/workflows/datapack.yml"
+      - "app/tool/**"
+      - "app/lib/core/**"
+
+env:
+  FLUTTER_VERSION: "3.47.5"
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    if: github.event_name == 'push' || inputs.mode == 'probe'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: app
+      - run: dart run tool/datapack.dart probe
+        working-directory: app
+
+  plan:
+    if: inputs.mode == 'backfill'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.p.outputs.matrix }}
+    steps:
+      - id: p
+        run: |
+          set -e
+          now=$(TZ=Asia/Taipei date +%Y)
+          a=${YEARS%-*}; b=${YEARS#*-}
+          items=""
+          for y in $(seq $a $b); do
+            tpex=false; compact=false
+            [ $y -ge $((now-2)) ] && tpex=true
+            [ $y -le $((now-3)) ] && compact=true
+            items="$items{\"year\":$y,\"tpex\":$tpex,\"compact\":$compact},"
+          done
+          echo "matrix={\"include\":[${items%,}]}" >> "$GITHUB_OUTPUT"
+        env:
+          YEARS: ${{ inputs.years }}
+
+  backfill:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: app
+      - name: 下載已經有的部分（中斷過的話接著抓）
+        run: gh release download data --pattern "daily-${{ matrix.year }}.json.gz" --dir app/pack || true
+      - run: dart run tool/datapack.dart year --year ${{ matrix.year }} --dir pack ${{ matrix.tpex && '--tpex' || '' }} ${{ matrix.compact && '--compact' || '' }}
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: daily-${{ matrix.year }}
+          path: app/pack/daily-${{ matrix.year }}.json.gz
+          retention-days: 3
+
+  backfill-extra:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: app
+      - run: |
+          gh release download data --pattern "revenue.json.gz" --dir app/pack || true
+          gh release download data --pattern "dividends.json.gz" --dir app/pack || true
+      - run: |
+          set -e
+          dart run tool/datapack.dart revenue --dir pack --from 2012-01
+          dart run tool/datapack.dart dividends --dir pack --years 2012-$(TZ=Asia/Taipei date +%Y)
+          dart run tool/datapack.dart intl --dir pack
+        working-directory: app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extra
+          path: |
+            app/pack/revenue.json.gz
+            app/pack/dividends.json.gz
+            app/pack/intl.json.gz
+          retention-days: 3
+
+  publish:
+    needs: [backfill, backfill-extra]
+    if: ${{ !cancelled() && inputs.mode == 'backfill' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: datapack-write
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: app
+      - name: 先拿 release 上現有的檔案（這次沒重抓的年份）
+        run: gh release download data --dir app/pack --pattern "*.json.gz" || true
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+      - run: |
+          set -e
+          find dl -name "*.json.gz" -exec cp {} app/pack/ \;
+          ls -la app/pack
+      - run: dart run tool/datapack.dart assemble --dir pack
+        working-directory: app
+      - name: 上傳到 release「data」
+        run: |
+          set -e
+          gh release view data >/dev/null 2>&1 || gh release create data --title "資料包（App 自動下載用）" \
+            --notes "台股選股 App 的長期分析資料，GitHub Actions 每個交易日晚上自動更新。一般使用者不需要手動下載。" \
+            --prerelease --latest=false --target "${{ github.sha }}"
+          gh release upload data app/pack/*.json.gz app/pack/manifest.json --clobber
+      - run: dart run tool/datapack.dart research --dir pack
+        working-directory: app
+
+  daily:
+    if: github.event_name == 'schedule' || inputs.mode == 'daily'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    concurrency:
+      group: datapack-write
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: app
+      - name: 下載現有資料包
+        run: |
+          gh release view data >/dev/null 2>&1 || { echo "還沒有資料包，請先手動執行 backfill"; exit 1; }
+          gh release download data --dir app/pack --pattern "*.json.gz"
+      - run: |
+          touch pack/.start
+          sleep 1
+          dart run tool/datapack.dart daily --dir pack
+        working-directory: app
+      - name: 只上傳這次有更新的檔案
+        run: |
+          set -e
+          files=$(find app/pack -maxdepth 1 -type f -newer app/pack/.start \( -name "*.json.gz" -o -name "manifest.json" \))
+          echo "$files"
+          gh release upload data $files --clobber
+
+  research:
+    if: inputs.mode == 'research'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - run: flutter pub get
+        working-directory: app
+      - run: gh release download data --dir app/pack --pattern "*.json.gz"
+      - run: dart run tool/datapack.dart research --dir pack
+        working-directory: app
