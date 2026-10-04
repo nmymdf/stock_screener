@@ -1,6 +1,6 @@
-/// 個股分析報告：短中長交叉分析與機會類型、預估持有期間（D1～D3＋信心度＋
-/// 升降級條件）、推薦理由、交易計畫（進場、停損、目標、加碼時機、明天怎麼做）、
-/// 歷史上同類訊號的結果、量價狀態、走勢圖、各模組分數逐項拆解、技術指標。
+/// 個股分析報告：上面是長期（總分、六大類、白話數據、含息走勢、營收、配息），
+/// 下面是短線參考（短中長交叉分析、預估持有期間、交易計畫、量價狀態、走勢圖、
+/// 各模組分數逐項拆解、技術指標）。
 library;
 
 import 'dart:math' as math;
@@ -74,7 +74,7 @@ class StockReportScreen extends StatelessWidget {
               children: [
                 Bullets(report.triggers, BulletKind.info),
                 const SizedBox(height: 4),
-                Text('條件出現的那天收盤後，這檔就會出現在「推薦」裡，並附上完整的停損和目標。', style: Theme.of(context).textTheme.bodySmall),
+                Text('條件出現的那天收盤後，這檔就會出現在「短線」分頁的訊號裡，並附上完整的停損和目標。', style: Theme.of(context).textTheme.bodySmall),
               ],
             ),
           ),

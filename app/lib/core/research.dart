@@ -188,6 +188,21 @@ String runPackResearch(String dir) {
     '報酬指數：${data.hasTri ? '有' : '沒有（改用加權指數，會低估基準）'}；營收 ${data.revenue.cur.length} 家、最新 ${data.revenue.lastMonth}；'
     '除權息 ${data.dividends.byCode.length} 家；國際指標 ${data.intl.series.keys.join('、')}',
   );
+  sb.writeln('總報酬指數的除權息調整：證交所公布 ${data.eventsFromTwse} 次、用漲跌價差推算 ${data.eventsFromChange} 次');
+  final tri0 = data.tri.indexWhere((x) => !x.isNaN);
+  if (tri0 >= 0) {
+    final yrs = (data.nd - 1 - tri0) / 250;
+    final c = math.pow(data.tri[data.nd - 1] / data.tri[tri0], 1 / yrs) - 1;
+    final p = math.pow(data.taiex[data.nd - 1] / data.taiex[tri0], 1 / yrs) - 1;
+    sb.writeln('基準檢查：${data.dates[tri0]} 起 加權報酬指數年化 ${_p(c.toDouble())}、加權指數年化 ${_p(p.toDouble())}（差距約等於殖利率）');
+  }
+  final tsmc = data.stock('2330');
+  if (tsmc != null) {
+    final i = data.index['2330']!;
+    final a0 = tsmc.trAt(tsmc.start), b0 = tsmc.trAt(data.nd - 1);
+    final ca = data.samples.first.close[i], cb = data.samples.last.close[i];
+    sb.writeln('2330 檢查：總報酬 ${(b0 / a0).toStringAsFixed(2)} 倍、股價（第一個檢視日到現在）${(cb / ca).toStringAsFixed(2)} 倍');
+  }
   final r = runLtAnalysis(data);
   sb.writeln('分析耗時 ${r.elapsed.inMilliseconds} ms');
   // 各年資料涵蓋率

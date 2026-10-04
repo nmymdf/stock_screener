@@ -43,6 +43,20 @@ List<Widget> ltLeftCards(BuildContext context, String code) {
   ];
 }
 
+/// 只要總分與理由那一張（持股詳細頁用）。
+class LtSummaryCard extends StatelessWidget {
+  final String code;
+  const LtSummaryCard({super.key, required this.code});
+
+  @override
+  Widget build(BuildContext context) {
+    final r = context.watch<LongTermStore>().result;
+    final s = r?.scoreOf(code);
+    if (r == null || s == null) return const SizedBox.shrink();
+    return _LtHeader(r: r, s: s);
+  }
+}
+
 /// 右欄：含息走勢、營收、配息。
 List<Widget> ltRightCards(BuildContext context, String code) {
   final r = context.watch<LongTermStore>().result;

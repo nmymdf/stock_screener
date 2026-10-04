@@ -17,7 +17,7 @@ import 'screens/tools_screen.dart';
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
-  /// 從任何畫面切換到某個分頁（例如推薦頁上的市場橫幅點下去跳到市場頁）。
+  /// 從任何畫面切換到某個分頁（例如組合頁的市場環境點下去跳到市場頁）。
   static void goTo(BuildContext context, int index) =>
       context.findAncestorStateOfType<_HomeShellState>()?._select(index);
 

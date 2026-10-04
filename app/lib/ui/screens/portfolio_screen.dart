@@ -114,18 +114,26 @@ class _IdealView extends StatelessWidget {
           children: [
             Text(
               '照同一套規則從 ${s.from} 開始操作到今天：年化 ${sp(s.cagr)}（同期$bench ${sp(s.benchCagr)}），'
-              '${s.yearRows.length} 年中有 ${s.yearRows.where((y) => y.beat).length} 年贏指數，最大跌幅 ${pc(s.mdd)}。',
+              '${s.yearRows.length} 年中有 ${s.yearRows.where((y) => y.beat).length} 年贏指數，最大跌幅 ${pc(s.mdd)}；'
+              '每筆持股平均抱 ${(s.avgHoldDays / 21).toStringAsFixed(1)} 個月，${pc(s.posWin)} 賣出時是賺錢的。',
               style: const TextStyle(fontSize: 13, height: 1.4),
             ),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton(
-                onPressed: () => HomeShell.goTo(context, HomeShell.backtest),
-                child: const Text('看完整回測 →'),
-              ),
+            Row(
+              children: [
+                const Expanded(child: _CapitalField()),
+                TextButton(onPressed: () => HomeShell.goTo(context, HomeShell.backtest), child: const Text('看完整回測 →')),
+              ],
             ),
             const Divider(height: 8),
             for (final e in hold) _HoldRow(r: r, si: e.key, weight: e.value.$1, since: e.value.$2, total: total),
+            if (sim.rebalances.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  '上次檢視 ${sim.rebalances.last.date}（${sim.rebalances.last.execDate} 收盤調整）；權重是目前市值的比例，漲跌後會自然偏離，不用天天調整。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
           ],
         ),
       ),
@@ -224,6 +232,7 @@ class _HoldRow extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 3),
                       child: Text('進場時機：${timing.$1}', style: TextStyle(fontSize: 12, color: timing.$2)),
                     ),
+                  _Amount(weight: weight, price: s?.raw.close),
                 ],
               ),
             ),
@@ -481,6 +490,75 @@ class _SwapRowTile extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// 試算投入金額（萬元）。
+class _CapitalField extends StatefulWidget {
+  const _CapitalField();
+
+  @override
+  State<_CapitalField> createState() => _CapitalFieldState();
+}
+
+class _CapitalFieldState extends State<_CapitalField> {
+  late final TextEditingController _c;
+
+  @override
+  void initState() {
+    super.initState();
+    final v = context.read<LongTermStore>().capital;
+    _c = TextEditingController(text: v == null ? '' : v.toStringAsFixed(v == v.roundToDouble() ? 0 : 1));
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Align(
+    alignment: Alignment.centerLeft,
+    child: SizedBox(
+      width: 190,
+      child: TextField(
+        controller: _c,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: const InputDecoration(
+          isDense: true,
+          labelText: '試算投入金額',
+          suffixText: '萬元',
+          border: OutlineInputBorder(),
+        ),
+        onChanged: (t) => context.read<LongTermStore>().setCapital(double.tryParse(t.replaceAll(',', '').trim())),
+      ),
+    ),
+  );
+}
+
+/// 有填投入金額時：這檔大約要買多少錢、幾股。
+class _Amount extends StatelessWidget {
+  final double weight;
+  final double? price;
+  const _Amount({required this.weight, required this.price});
+
+  @override
+  Widget build(BuildContext context) {
+    final cap = context.select<LongTermStore, double?>((s) => s.capital);
+    if (cap == null) return const SizedBox.shrink();
+    final money = cap * 10000 * weight;
+    final p = price;
+    final shares = p == null || p.isNaN || p <= 0 ? null : (money / p).floor();
+    final lots = shares == null ? null : shares ~/ 1000;
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Text(
+        '約 ${(money / 10000).toStringAsFixed(1)} 萬'
+        '${shares == null ? '' : '・約 ${lots! >= 1 ? '$lots 張${shares % 1000 >= 100 ? '又 ${shares % 1000} 股' : ''}' : '$shares 股（零股）'}'}',
+        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
       ),
     );
   }

@@ -99,7 +99,12 @@ class LtData {
   final DividendData dividends;
   final IntlData intl;
 
+  /// 建資料時偵測到的除權息天數：用證交所公布的、用漲跌價差推算的（驗證用）。
+  final int eventsFromTwse, eventsFromChange;
+
   LtData({
+    this.eventsFromTwse = 0,
+    this.eventsFromChange = 0,
     required this.dates,
     required this.stocks,
     required this.taiex,
@@ -376,6 +381,8 @@ class LtDataBuilder {
       stocks[st.idx] = LtStock(e.key, names[e.key] ?? '', st.start, st.tr.take());
     }
     return LtData(
+      eventsFromTwse: eventsFromTwse,
+      eventsFromChange: eventsFromChange,
       dates: List.unmodifiable(dates),
       stocks: [for (final s in stocks) s!],
       taiex: Float64List.fromList(_taiex),

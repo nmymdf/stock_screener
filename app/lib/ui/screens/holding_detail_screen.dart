@@ -20,6 +20,7 @@ import '../layout.dart';
 import '../theme.dart';
 import '../widgets/charts.dart';
 import '../widgets/horizon_widgets.dart';
+import '../widgets/lt_stock_cards.dart';
 import '../widgets/score_widgets.dart';
 import 'holding_forms.dart';
 import 'stock_report_screen.dart';
@@ -70,6 +71,7 @@ class HoldingDetailScreen extends StatelessWidget {
               SplitView(
                 left: [
                   _TodayCard(h: h, e: e, push: push),
+                  if (!h.closed) LtSummaryCard(code: h.code),
                   if (h.closed && e.summary != null)
                     SectionCard(title: '結案摘要', child: Bullets(e.summary!.lines, BulletKind.info)),
                   if (e.scenario.isNotEmpty) _ScenarioCard(e: e),

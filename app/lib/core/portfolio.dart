@@ -302,7 +302,7 @@ class PortfolioSim {
   }
 
   /// 在檢視日 [sc] 依目前持股做決定。[initial] = 第一次建倉（不受每月換股上限）。
-  LtDecision decide(SampleScores sc, {Map<int, int>? entryT}) {
+  LtDecision decide(ScoreSource sc, {Map<int, int>? entryT}) {
     final t = sc.t;
     final exp = exposure.at(t, sc.breadth, mode: cfg.exposure);
     final held = (entryT ?? {for (final e in _pos.entries) e.key: e.value.entryT});
@@ -345,16 +345,18 @@ class PortfolioSim {
       addInd(w.si, 1);
     }
     final taken = <int>{...held.keys};
-    final candidates = [
-      for (final c in sc.ranked)
-        if (c.investable &&
-            c.pct >= cfg.buyPct &&
-            !c.broken &&
-            !c.flags.contains(LtFlag.overheat) &&
-            !c.flags.contains(LtFlag.loss) &&
-            !taken.contains(c.si))
-          c,
-    ];
+    // 依名次往下看，到不在前 10% 就停（不用看完全部）
+    final candidates = <LtScore>[];
+    for (final c in sc.rankedIter) {
+      if (c.pct < cfg.buyPct) break;
+      if (c.investable &&
+          !c.broken &&
+          !c.flags.contains(LtFlag.overheat) &&
+          !c.flags.contains(LtFlag.loss) &&
+          !taken.contains(c.si)) {
+        candidates.add(c);
+      }
+    }
     final buys = <(int, String)>[];
     var changes = 0;
     bool indOk(LtScore c) => (indCount[industryKey(c.code)] ?? 0) < cfg.maxPerIndustry;
@@ -560,11 +562,8 @@ class PortfolioSim {
       eqw[t - startT] = eqv;
       final si = sampleAt[t];
       if (si != null) {
-        final sc = book.sample(data, si);
-        eqUniverse = [
-          for (final x in sc.ranked)
-            if (x.investable) x.si,
-        ];
+        final sc = BookView(book, data, si);
+        eqUniverse = sc.investable.toList();
         pending = decide(sc);
       }
     }

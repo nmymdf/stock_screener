@@ -233,8 +233,8 @@ double avgIn(List<double> v, int from, int to) {
   return s / (to - from + 1);
 }
 
-/// 一檔股票所有指標的整條序列。分析和回測共用同一份，確保「推薦」和
-/// 「回測」用的是一模一樣的判斷邏輯。
+/// 一檔股票所有指標的整條序列。短線分析、持股追蹤、自訂篩選共用同一份，
+/// 確保各處用的是一模一樣的判斷邏輯。
 class StockSeries {
   final String code;
   final List<DailyBar> bars;

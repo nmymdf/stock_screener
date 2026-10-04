@@ -419,10 +419,16 @@ class _TodaySummary extends StatelessWidget {
   Widget build(BuildContext context) {
     String name(Holding h) => '${h.code} ${kBuiltinStocksByCode[h.code]?.name ?? ''}'.trim();
     final groups = <String, (DailyAction, HoldStyle, List<Holding>)>{};
+    final ltWeak = <Holding>[];
     var normal = 0;
     for (final (h, e) in open) {
       if (e.action == DailyAction.hold || e.action == DailyAction.pending) {
-        normal++;
+        // 走勢正常、但長期評分轉弱（理由破壞或排名後 30%）
+        if (ltAlert(ltScoreFor(context, h.code)) != null) {
+          ltWeak.add(h);
+        } else {
+          normal++;
+        }
         continue;
       }
       final label = actionText(e.action, h.style);
@@ -481,6 +487,23 @@ class _TodaySummary extends StatelessWidget {
                       ),
                     ),
                     Expanded(child: Text(hs.map(name).join('、'), style: const TextStyle(fontSize: 13))),
+                  ],
+                ),
+              ),
+            if (ltWeak.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 132,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Tag('長期評分轉弱', actionColor(DailyAction.caution), filled: true),
+                      ),
+                    ),
+                    Expanded(child: Text(ltWeak.map(name).join('、'), style: const TextStyle(fontSize: 13))),
                   ],
                 ),
               ),

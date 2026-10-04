@@ -123,21 +123,72 @@ class LtScore {
   double? group(FactorGroup g) => groups[g];
 }
 
+/// 回測只需要的評分介面：查單檔、依名次往下看、廣度。
+abstract class ScoreSource {
+  int get t;
+  String get date;
+  double get breadth;
+  LtScore? of(int si);
+
+  /// 依總分由高到低（可以只看前面幾檔就停）。
+  Iterable<LtScore> get rankedIter;
+}
+
 /// 一個檢視日的全市場評分。
-class SampleScores {
+class SampleScores implements ScoreSource {
   final int sampleIdx;
   final LtSample sample;
   final List<LtScore> ranked; // 總分由高到低
   final Map<int, LtScore> bySi;
 
   /// 有分數的股票裡，站上年線（總報酬指數 > 200 日均）的比例。
+  @override
   final double breadth;
 
   SampleScores(this.sampleIdx, this.sample, this.ranked, this.breadth) : bySi = {for (final s in ranked) s.si: s};
 
+  @override
   LtScore? of(int si) => bySi[si];
+  @override
   int get t => sample.t;
+  @override
   String get date => sample.date;
+  @override
+  Iterable<LtScore> get rankedIter => ranked;
+}
+
+/// 從精簡紀錄按需要還原的評分（回測每個月只會看前面幾十檔和自己的持股，不用全部還原）。
+class BookView implements ScoreSource {
+  final ScoreBook book;
+  final LtData data;
+  final int s;
+  final Map<int, LtScore?> _cache = {};
+  BookView(this.book, this.data, this.s);
+
+  @override
+  int get t => data.samples[s].t;
+  @override
+  String get date => data.samples[s].date;
+  @override
+  double get breadth => book.breadth[s];
+
+  @override
+  LtScore? of(int si) =>
+      _cache.putIfAbsent(si, () => book.scored(s, si) ? LtScore.fromBook(book, s, si, data.stocks[si].code) : null);
+
+  @override
+  Iterable<LtScore> get rankedIter sync* {
+    for (final si in book.order[s]) {
+      yield of(si)!;
+    }
+  }
+
+  /// 可以新買進的股票（不用還原成物件）。
+  Iterable<int> get investable sync* {
+    for (final si in book.order[s]) {
+      if (book.flags[book.at(s, si)] & (1 << LtFlag.illiquid.index) == 0) yield si;
+    }
+  }
 }
 
 /// 所有檢視日的評分，精簡存放（每檔每次幾個數字），回測、因子研究、分數走勢用。
