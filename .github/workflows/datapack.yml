@@ -13,13 +13,16 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "daily＝每日更新、backfill＝回補歷年、probe＝試抓、research＝跑長期回測"
+        description: "daily＝每日更新、backfill＝回補歷年、publish＝用之前回補的結果發布、probe＝試抓、research＝跑長期回測"
         type: choice
-        options: [daily, backfill, probe, research]
+        options: [daily, backfill, publish, probe, research]
         default: daily
       years:
         description: "回補哪幾年（例如 2013-2026）"
         default: "2013-2026"
+      from_run:
+        description: "publish 用：從哪一次回補執行（run id）拿抓好的檔案"
+        default: ""
   push:
     paths:
       - ".github/workflows/datapack.yml"
@@ -33,6 +36,7 @@ env:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   probe:
@@ -134,7 +138,7 @@ jobs:
 
   publish:
     needs: [backfill, backfill-extra]
-    if: ${{ always() && inputs.mode == 'backfill' }}
+    if: ${{ always() && (inputs.mode == 'backfill' || inputs.mode == 'publish') }}
     runs-on: ubuntu-latest
     concurrency:
       group: datapack-write
@@ -149,10 +153,14 @@ jobs:
       - run: flutter pub get
         working-directory: app
       - name: 先拿 release 上現有的檔案（這次沒重抓的年份）
-        run: gh release download data --dir app/pack --pattern "*.json.gz" || true
+        run: |
+          mkdir -p app/pack
+          gh release download data --dir app/pack --pattern "*.json.gz" || true
       - uses: actions/download-artifact@v4
         with:
           path: dl
+          run-id: ${{ inputs.from_run || github.run_id }}
+          github-token: ${{ github.token }}
       - run: |
           set -e
           find dl -name "*.json.gz" -exec cp {} app/pack/ \;
