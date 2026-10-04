@@ -240,4 +240,60 @@ void main() {
     );
     expect(validateLots(const [BuyLot('2026-01-02', 100, 1000)], const [SellLot('2026-01-05', 110, 1000)]), isNull);
   });
+
+  group('長期持有習慣與追蹤起點', () {
+    test('stock_acc 預設長期；已經持有兩週以上的，從第一次同步那天開始追蹤；設定會存下來', () async {
+      final accDir = await writeAcc(tmp);
+      final local = LocalStore(dir: Directory('${tmp.path}/mine'));
+      final store = HoldingsStore(
+        store: local,
+        accSource: StockAccSource(dir: accDir),
+      )..today = () => '2026-06-01';
+      await store.load();
+      final tsmc = store.openFor('2330', source: HoldingSource.stockAcc)!;
+      expect(tsmc.style, HoldStyle.long);
+      expect(tsmc.trackSince, '2026-06-01');
+      expect(tsmc.takenOver, true);
+      // 已結案的不用設追蹤起點
+      expect(store.accHoldings.where((h) => h.closed).every((h) => h.trackSince == null), true);
+
+      // 改預設持有習慣、回落容忍 → 存檔，重開還在；追蹤起點不會因為隔天再同步而往後跑
+      await store.setAccDefaultStyle(HoldStyle.swing);
+      await store.setDrawdownLimit(0.3);
+      expect(store.openFor('2330', source: HoldingSource.stockAcc)!.style, HoldStyle.swing);
+      final reopened = HoldingsStore(
+        store: local,
+        accSource: StockAccSource(dir: accDir),
+      )..today = () => '2026-06-20';
+      await reopened.load();
+      expect(reopened.accDefaultStyle, HoldStyle.swing);
+      expect(reopened.drawdownLimit, 0.3);
+      expect(reopened.openFor('2330', source: HoldingSource.stockAcc)!.trackSince, '2026-06-01');
+
+      // 個別改過的持有方式不受預設影響
+      final h = reopened.openFor('2317', source: HoldingSource.stockAcc)!;
+      await reopened.upsert(h.copyWith(style: HoldStyle.long));
+      await reopened.setAccDefaultStyle(HoldStyle.short);
+      expect(reopened.openFor('2317', source: HoldingSource.stockAcc)!.style, HoldStyle.long);
+      expect(reopened.openFor('2330', source: HoldingSource.stockAcc)!.style, HoldStyle.short);
+
+      // 從今天重新開始追蹤
+      reopened.today = () => '2026-07-01';
+      await reopened.restartTracking(h.id);
+      expect(reopened.openFor('2317', source: HoldingSource.stockAcc)!.trackSince, '2026-07-01');
+    });
+
+    test('手動新增的持股買進日是兩週以前，也從今天開始追蹤；最近買的照常從買進日', () async {
+      final store = HoldingsStore(store: LocalStore(dir: Directory('${tmp.path}/mine')))..today = () => '2026-06-01';
+      await store.load();
+      await store.upsert(
+        const Holding(id: 'a', code: '2330', style: HoldStyle.long, buys: [BuyLot('2025-01-02', 500, 1000)]),
+      );
+      await store.upsert(
+        const Holding(id: 'b', code: '2317', style: HoldStyle.swing, buys: [BuyLot('2026-05-28', 150, 1000)]),
+      );
+      expect(store.byId('a')!.trackSince, '2026-06-01');
+      expect(store.byId('b')!.trackSince, isNull);
+    });
+  });
 }

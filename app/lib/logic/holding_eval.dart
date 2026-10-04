@@ -67,6 +67,18 @@ extension DailyActionInfo on DailyAction {
       this == DailyAction.sellHalf;
 }
 
+/// 每天建議的文字：長期持有用「健康／觀察／轉弱／考慮減碼」，其他用短中線的說法。
+String actionText(DailyAction a, HoldStyle style) {
+  if (style != HoldStyle.long) return a.label;
+  return switch (a) {
+    DailyAction.hold => '健康',
+    DailyAction.caution => '觀察',
+    DailyAction.exit => '轉弱',
+    DailyAction.sellHalf || DailyAction.stopLoss || DailyAction.overdue => '考慮減碼',
+    _ => a.label,
+  };
+}
+
 /// 證交所的交易成本：手續費 0.1425%（最低 20 元）、證交稅股票 0.3%、ETF 0.1%。
 double buyFee(double amount) => amount <= 0 ? 0 : math.max(20, amount * 0.001425);
 
@@ -226,6 +238,9 @@ class HoldingEval {
   final String? coneNote; // 跟同類訊號典型走勢的比較
   final String? styleAdvice; // 持有週期跟持有方式不一致時的建議
 
+  /// 在現價之下、碰到就會改變建議的價位（給持股頁「要盯的價位」只列很接近的）。
+  final List<WatchLevel> watchLevels;
+
   const HoldingEval({
     required this.state,
     this.action = DailyAction.pending,
@@ -266,7 +281,27 @@ class HoldingEval {
     this.calibration,
     this.coneNote,
     this.styleAdvice,
+    this.watchLevels = const [],
   });
+
+  /// 現價離最近的關鍵價位還有多少（%）；沒有就回傳 null。
+  WatchLevel? get nearestLevel {
+    if (lastClose == null || watchLevels.isEmpty) return null;
+    final l = [...watchLevels]..sort((a, b) => b.price.compareTo(a.price));
+    return l.first;
+  }
+
+  double? get distToLevelPct {
+    final l = nearestLevel;
+    return l == null || lastClose == null ? null : (lastClose! - l.price) / lastClose! * 100;
+  }
+}
+
+class WatchLevel {
+  final double price;
+  final String what;
+  final DailyAction kind;
+  const WatchLevel(this.price, this.what, this.kind);
 }
 
 /// 已實現損益：每次賣出以當時的平均成本計算，扣手續費和證交稅。
@@ -369,8 +404,10 @@ HoldingEval evaluateHolding(
   Map<String, Regime>? regimeByDate,
   Map<String, double>? taiex,
   CalStat? calibration,
+  double drawdownLimit = 0.25, // 長期：從持有期間高點回落多少算「考慮減碼」
 }) {
   final type = securityTypeOf(h.code);
+  final longMode = h.style == HoldStyle.long;
   final realized = realizedPnl(h, type);
   final shares = h.shares;
   final cost = h.avgCost;
@@ -400,6 +437,17 @@ HoldingEval evaluateHolding(
   if (adjusted.first.date.compareTo(buyDate) > 0) {
     notes.add('買進日 $buyDate 早於本機資料的第一天（${adjusted.first.date}），從那天開始計算');
   }
+  // 已經持有一段時間才加進來追蹤：從追蹤起點那天才開始用規則判斷，不倒推過去的走勢。
+  final buyIdx = e;
+  var takeover = false;
+  if (!pending && h.takenOver) {
+    final k = adjusted.lastIndexWhere((b) => b.date.compareTo(h.trackSince!) <= 0);
+    if (k > e) {
+      e = k;
+      takeover = true;
+      notes.add('接手追蹤：從 ${adjusted[e].date} 開始判斷（之前的走勢不算），損益仍以實際成本計算');
+    }
+  }
   // 全部賣掉的持股，紀錄只到最後一次賣出那天。
   var end = n - 1;
   if (h.closed && h.lastSellDate != null) {
@@ -415,8 +463,11 @@ HoldingEval evaluateHolding(
 
   // 還原權息因子：買進那天「還原價 ÷ 實際價」。之後有除權息，成本跟著等比例下修，
   // 停損才不會被除息的假跌幅觸發。
-  final f = factorAt(e);
+  final f = factorAt(buyIdx);
   final c = cost * f; // 還原後成本
+  // 規則的基準價：一般是成本；接手追蹤時是開始追蹤那天的收盤（停損、R 都從這裡算）
+  final ref = takeover ? s.close[e] : c;
+  final from = takeover ? '接手當天收盤' : '進場價';
   if ((f - 1).abs() > 0.001) notes.add('買進後有除權息，比較停損時成本以還原後的 ${_f(c)} 計算');
 
   double atrAt(int i) {
@@ -433,32 +484,33 @@ HoldingEval evaluateHolding(
   double stop0;
   double? target;
   String stopBasis;
+  final usePlan = h.planStop != null && !takeover;
   switch (h.style) {
     case HoldStyle.short:
-      stop0 = h.planStop != null ? h.planStop! * f : c - 2 * atrE;
-      stopBasis = h.planStop != null ? '推薦時的停損' : '進場價 − 2 ATR';
+      stop0 = usePlan ? h.planStop! * f : ref - 2 * atrE;
+      stopBasis = usePlan ? '推薦時的停損' : '$from − 2 ATR';
     case HoldStyle.swing:
-      stop0 = h.planStop != null ? h.planStop! * f : c - 2.5 * atrE;
-      stopBasis = h.planStop != null ? '推薦時的停損' : '進場價 − 2.5 ATR';
+      stop0 = usePlan ? h.planStop! * f : ref - 2.5 * atrE;
+      stopBasis = usePlan ? '推薦時的停損' : '$from − 2.5 ATR';
     case HoldStyle.long:
-      stop0 = c * 0.85;
-      stopBasis = '虧損 15%';
+      stop0 = s.close[e] * (1 - drawdownLimit);
+      stopBasis = '持有期間最高收盤回落 ${(drawdownLimit * 100).round()}%（會隨新高往上調）';
     case HoldStyle.custom:
-      stop0 = h.manualStop ?? c * 0.92;
-      stopBasis = h.manualStop != null ? '你設定的停損' : '沒有設定停損，先用虧損 8%';
+      stop0 = h.manualStop ?? ref * 0.92;
+      stopBasis = h.manualStop != null ? '你設定的停損' : '沒有設定停損，先用$from − 8%';
       target = h.manualTarget;
   }
   if (h.style != HoldStyle.custom && h.manualStop != null && h.manualStop! > stop0) {
     stop0 = h.manualStop!;
     stopBasis = '你調高的停損';
   }
-  var risk = c - stop0;
+  var risk = ref - stop0;
   if (risk <= 0) {
     risk = 2 * atrE;
-    stop0 = c - risk;
-    stopBasis = '$stopBasis（設定在成本之上不合理，改用進場價 − 2 ATR）';
+    stop0 = ref - risk;
+    stopBasis = '$stopBasis（設定在$from之上不合理，改用$from − 2 ATR）';
   }
-  if (h.style == HoldStyle.short) target = h.planTarget != null ? h.planTarget! * f : c + 2 * risk;
+  if (h.style == HoldStyle.short) target = h.planTarget != null && !takeover ? h.planTarget! * f : ref + 2 * risk;
 
   double? relAt(int j, int k) {
     if (taiex == null || j - k < 0) return null;
@@ -496,6 +548,9 @@ HoldingEval evaluateHolding(
   Regime? prevRegime;
   var prevHealth = -1;
   var stopRaises = 0;
+  var belowY = 0;
+  var belowYFalling = false;
+  String? prevLongLabel;
 
   for (var j = e; j <= end && !pending; j++) {
     final close = s.close[j];
@@ -503,7 +558,7 @@ HoldingEval evaluateHolding(
     final fj = factorAt(j);
     final stopBefore = stop;
     final events = <String>[];
-    final rDay = (close - c) / risk;
+    final rDay = (close - ref) / risk;
     final dayRegime = regimeByDate?[date] ?? (j == n - 1 ? regime : null);
     final sharesDay = h.sharesAt(date);
     for (final b in h.buys) {
@@ -518,7 +573,33 @@ HoldingEval evaluateHolding(
     }
 
     var justTriggered = false;
-    if (triggered == null) {
+    // 長期：年線（不夠一年資料就退而用 200 日線、半年線、季線）
+    double yv = double.nan;
+    var yName = '年線';
+    for (final (nm, v, back) in [
+      ('年線', s.sma240, 20),
+      ('200 日線', s.ema200, 20),
+      ('半年線', s.sma120, 10),
+      ('季線', s.sma60, 5),
+    ]) {
+      if (ok(v[j])) {
+        yv = v[j];
+        yName = nm;
+        if (j >= back && ok(v[j - back])) belowYFalling = v[j] < v[j - back];
+        break;
+      }
+    }
+    if (longMode) {
+      if (close > maxClose * 1.01 && j > e + 2) events.add('創持有期間新高（收盤 ${_f(close / fj)}）');
+      maxHigh = math.max(maxHigh, s.high[j]);
+      maxClose = math.max(maxClose, close);
+      stop = math.max(stop, maxClose * (1 - drawdownLimit));
+      belowY = ok(yv) && close < yv ? belowY + 1 : 0;
+      if (belowY == 1) events.add('收盤跌破$yName ${_f(yv / fj)}');
+      path.add(stop);
+      pathDates.add(date);
+    }
+    if (!longMode && triggered == null) {
       // 1. 收盤跌破「前一天為止」的停損
       if (close < stop) {
         triggerDate = date;
@@ -566,19 +647,25 @@ HoldingEval evaluateHolding(
           h.style == HoldStyle.short &&
           targetHitDate == null &&
           j - e + 1 >= 10 &&
-          maxClose < c + risk) {
+          maxClose < ref + risk) {
         triggerDate = date;
         triggered = HoldState.exit;
-        triggerReason = '買進後 ${j - e + 1} 個交易日還沒漲到 +1R（${_f(c + risk)}），表現不如預期（時間停損）';
+        triggerReason = '${takeover ? '開始追蹤' : '買進'}後 ${j - e + 1} 個交易日還沒漲到 +1R（${_f(ref + risk)}），表現不如預期（時間停損）';
         justTriggered = true;
       }
 
       // 5. 收盤後更新停損（只會往上）
       if (triggered == null && (h.style == HoldStyle.short || h.style == HoldStyle.swing)) {
-        if (close >= c + risk) {
-          if (!breakeven) events.add('漲到 +1R（${_f((c + risk) / fj)}），停損拉到成本——這筆最差也是打平');
+        if (close >= ref + risk) {
+          if (!breakeven) {
+            events.add(
+              takeover
+                  ? '漲到 +1R（${_f((ref + risk) / fj)}），停損拉到接手當天的價位 ${_f(ref / fj)}'
+                  : '漲到 +1R（${_f((ref + risk) / fj)}），停損拉到成本——這筆最差也是打平',
+            );
+          }
           breakeven = true;
-          stop = math.max(stop, c);
+          stop = math.max(stop, ref);
         }
         final trailingOn = h.style == HoldStyle.short ? targetHitDate != null : breakeven;
         if (trailingOn) stop = math.max(stop, maxHigh - 3 * atrAt(j));
@@ -591,14 +678,14 @@ HoldingEval evaluateHolding(
       }
     }
     minClose = math.min(minClose, close);
-    if (stop > stopBefore + 1e-9) {
+    if (!longMode && stop > stopBefore + 1e-9) {
       stopRaises++;
       if (!events.any((x) => x.contains('停損拉到成本'))) {
         events.add('停損上調 ${_f(stopBefore / fj)} → ${_f(stop / fj)}（移動停利：最高價 − 3 ATR）');
       }
     }
     for (var m = 2; m <= 5; m++) {
-      if (rDay >= m && (j == e || (s.close[j - 1] - c) / risk < m)) events.add('獲利達到 +${m}R');
+      if (!longMode && rDay >= m && (j == e || (s.close[j - 1] - ref) / risk < m)) events.add('獲利達到 +${m}R');
     }
 
     // 每日檢查：買進理由、量價、持有週期、市場
@@ -671,6 +758,43 @@ HoldingEval evaluateHolding(
     if (sharesDay <= 0 && j > e) {
       action = DailyAction.closed;
       reason = '已全部賣出';
+    } else if (longMode) {
+      final dd = maxClose <= 0 ? 0.0 : 1 - close / maxClose;
+      final watch = <String>[];
+      if (ok(yv) && close < yv) {
+        watch.add('收盤在$yName ${_f(yv / fj)} 之下（第 $belowY 天）${belowYFalling ? '，$yName往下彎' : ''}');
+      }
+      if (dd >= drawdownLimit * 0.5) watch.add('從持有期間高點 ${_f(maxClose / fj)} 回落 ${(dd * 100).toStringAsFixed(1)}%');
+      if (health < 60) watch.add('健康度 $health：${checks.where((x) => !x.ok).map((x) => x.label).join('、')} 不成立');
+      if (dayRegime == Regime.bear || dayRegime == Regime.weak) watch.add('市場處於「${dayRegime!.label}」');
+      if (isLast && (industryClass == IndustryClass.weakening || industryClass == IndustryClass.lagging)) {
+        watch.add('所屬「$industry」產業目前${industryClass!.label}');
+      }
+      if (pv.state == PvState.distribution) watch.add('量價「下跌放量」：${pv.detail}');
+      if (dd >= drawdownLimit) {
+        action = DailyAction.sellHalf;
+        reason =
+            '從持有期間高點 ${_f(maxClose / fj)} 回落 ${(dd * 100).toStringAsFixed(1)}%，超過你設定的 ${(drawdownLimit * 100).round()}%：'
+            '考慮減碼，或重新確認長期持有的理由';
+      } else if (belowY >= 3 && belowYFalling) {
+        action = DailyAction.exit;
+        reason = '收盤連續 $belowY 天在$yName ${_f(yv / fj)} 之下，而且$yName往下彎：長期趨勢轉弱';
+      } else if (watch.isNotEmpty) {
+        action = DailyAction.caution;
+        reason = watch.join('；');
+      } else {
+        action = DailyAction.hold;
+        reason =
+            '健康：${_p((close / c - 1) * 100)}，${ok(yv) ? '在$yName ${_f(yv / fj)} 之上 ${((close / yv - 1) * 100).toStringAsFixed(1)}%，' : ''}'
+            '離持有期間高點 −${(dd * 100).toStringAsFixed(1)}%，買進理由 ${checks.where((x) => x.ok).length}／${checks.length} 項成立';
+      }
+      if (newSignal != null && isLast && action == DailyAction.hold && close > c && health >= 70 && !noAdd) {
+        action = DailyAction.addOn;
+        reason = '今天出現「$newSignal」訊號，這檔健康、而且是賺錢的——長期持有可以考慮分批加碼（比上一次少）';
+      }
+      final label = actionText(action, HoldStyle.long);
+      if (prevLongLabel != null && label != prevLongLabel) events.add('狀態：$prevLongLabel → $label');
+      prevLongLabel = label;
     } else if (triggered != null && j > triggerIdx) {
       action = DailyAction.overdue;
       reason = '依規則應該在 $triggerDate 出場，已經第 ${j - triggerIdx} 個交易日沒有處理（$triggerReason）';
@@ -807,7 +931,7 @@ HoldingEval evaluateHolding(
     action = today?.action ?? DailyAction.hold;
     headline = today?.reason ?? '續抱';
     state = switch (action) {
-      DailyAction.sellHalf => HoldState.exit,
+      DailyAction.sellHalf || DailyAction.exit => HoldState.exit,
       DailyAction.caution => HoldState.watch,
       _ => HoldState.hold,
     };
@@ -835,7 +959,12 @@ HoldingEval evaluateHolding(
     addOn = '今天出現「$newSignal」訊號，而且這檔已經賺 ${rNow.toStringAsFixed(1)}R——符合「只加贏家」，可以考慮加碼';
   }
 
-  notes.insert(0, '停損起點：${_f(stop0 / f)}（$stopBasis）；1R = 每股 ${_f(risk / f)}');
+  notes.insert(
+    0,
+    longMode
+        ? '防守價：${_f(stop)}（$stopBasis）'
+        : '停損起點：${_f(stop0 / factorAt(e))}（$stopBasis）；1R = 每股 ${_f(risk / factorAt(e))}',
+  );
 
   // 明日劇本、加碼時機
   final scenario = <ScenarioLine>[];
@@ -843,91 +972,139 @@ HoldingEval evaluateHolding(
   final addRules = <String>[];
   String? styleAdvice;
   String? coneNote;
+  final levels = <WatchLevel>[];
   if (!pending && !h.closed && shares > 0) {
-    final atr = atrAt(n - 1);
-    final e20 = s.ema20[n - 1];
-    final addPrice = math.max(c + risk, maxHigh);
-    if (triggered != null) {
+    if (longMode) {
+      final i = n - 1;
+      double yv = double.nan;
+      var yName = '年線';
+      for (final (nm, v) in [('年線', s.sma240), ('200 日線', s.ema200), ('半年線', s.sma120), ('季線', s.sma60)]) {
+        if (ok(v[i])) {
+          yv = v[i];
+          yName = nm;
+          break;
+        }
+      }
+      final guard = maxClose * (1 - drawdownLimit);
+      if (ok(yv) && yv < lastClose) levels.add(WatchLevel(yv, '跌破$yName → 觀察', DailyAction.caution));
+      levels.add(WatchLevel(guard, '回落 ${(drawdownLimit * 100).round()}% → 考慮減碼', DailyAction.sellHalf));
+      if (ok(yv) && yv < lastClose) {
+        scenario.add(
+          ScenarioLine('收盤 < ${_f(yv)}（$yName）', '觀察：跌破$yName；連續 3 天而且$yName往下彎就是「轉弱」', DailyAction.caution),
+        );
+      } else if (ok(yv)) {
+        scenario.add(ScenarioLine('收盤 ≥ ${_f(yv)}（$yName）', '守在$yName之上，長期趨勢沒有轉弱', DailyAction.hold));
+      }
       scenario.add(
         ScenarioLine(
-          '明天開盤',
-          '依規則應該出場：$triggerReason',
-          triggered == HoldState.stopLoss ? DailyAction.stopLoss : DailyAction.exit,
+          '收盤 < ${_f(guard)}',
+          '考慮減碼：從持有期間高點 ${_f(maxClose)} 回落超過 ${(drawdownLimit * 100).round()}%',
+          DailyAction.sellHalf,
         ),
       );
+      addRules.addAll([
+        '長期持有的加碼：只在「健康」狀態、而且這筆是賺錢的時候，分批、每次比上一次少。',
+        if (ok(yv)) '比較好的加碼位置：回到$yName（${_f(yv)}）附近不破、再轉強；或是創持有期間新高（${_f(maxClose)}）之後。',
+        '虧損中不加碼（禁止向下攤平）。',
+      ]);
     } else {
-      final inLoss = stop < c * 0.999;
-      scenario.add(
-        ScenarioLine(
-          '收盤 < ${_f(stop)}',
-          inLoss ? '停損出場（不攤平、不凹單）' : (stop > c * 1.001 ? '移動停利出場，獲利了結' : '保本出場'),
-          inLoss ? DailyAction.stopLoss : DailyAction.exit,
-        ),
-      );
-      var warn = stop + 0.5 * atr;
-      if (ok(e20) && e20 > warn && e20 < lastClose) warn = e20;
-      final low = math.min(warn, lastClose);
-      if (warn < lastClose) {
-        scenario.add(ScenarioLine('${_f(stop)} ～ ${_f(warn)}', '警戒區：不加碼，準備出場', DailyAction.caution));
-      }
-      final canAddLater = !noAdd && rNow >= 0;
-      scenario.add(
-        ScenarioLine(canAddLater ? '${_f(low)} ～ ${_f(addPrice)}' : '收盤 ≥ ${_f(low)}', '續抱', DailyAction.hold),
-      );
-      if (h.style == HoldStyle.short && target != null && targetHitDate == null) {
-        scenario.add(ScenarioLine('最高碰到 ${_f(target)}', '到 2R 目標：先賣一半，剩下移動停利', DailyAction.sellHalf));
-      }
-      if (!breakeven && (h.style == HoldStyle.short || h.style == HoldStyle.swing)) {
-        scenario.add(ScenarioLine('收盤 ≥ ${_f(c + risk)}', '漲到 +1R：停損拉到成本 ${_f(c)}（之後最差打平）', DailyAction.hold));
-      }
-      if (canAddLater) {
-        scenario.add(ScenarioLine('收盤 ≥ ${_f(addPrice)} 且量 ≥ 5 日均量', '加碼條件成立（只加贏家，比上一次少）', DailyAction.addOn));
-      }
-    }
-
-    // 加碼時機
-    if (noAdd) {
-      addRules.add('均值回歸型的目標就是 20 日線、空間有限，不加碼；到目標全部出場。');
-    } else {
-      final blocked = rNow < 0 ? AddOnStatus.blocked : null;
-      addPlan.add(
-        AddOnLevel(
-          '① +1R 之後',
-          c + risk,
-          '收盤站上 ${_f(c + risk)}（+1R）、停損已拉到成本，這時加碼才不會讓整筆變成虧錢的風險',
-          blocked ?? (breakeven || rNow >= 1 ? AddOnStatus.done : AddOnStatus.waiting),
-        ),
-      );
-      if (h.strategy == 'B' || h.style == HoldStyle.short) {
-        addPlan.add(
-          AddOnLevel(
-            '② 回測 20 日線不破',
-            ok(e20) ? e20 : null,
-            '拉回 20 日線${ok(e20) ? ' ${_f(e20)}' : ''} 附近量縮，再收盤站上前一天高點（回檔買點）',
-            blocked ??
-                (rNow >= 1 && ok(e20) && (lastClose - e20).abs() <= 0.5 * atr
-                    ? AddOnStatus.ready
-                    : AddOnStatus.waiting),
+      final atr = atrAt(n - 1);
+      final e20 = s.ema20[n - 1];
+      final addPrice = math.max(ref + risk, maxHigh);
+      if (triggered != null) {
+        scenario.add(
+          ScenarioLine(
+            '明天開盤',
+            '依規則應該出場：$triggerReason',
+            triggered == HoldState.stopLoss ? DailyAction.stopLoss : DailyAction.exit,
           ),
         );
       } else {
-        addPlan.add(
-          AddOnLevel(
-            '② 整理後再突破',
-            maxHigh,
-            '買進後高點 ${_f(maxHigh)}：回檔整理後，放量收盤站上這個價（突破加碼）',
-            blocked ?? (rNow >= 1 && lastClose >= maxHigh * 0.995 ? AddOnStatus.ready : AddOnStatus.waiting),
+        final inLoss = stop < c * 0.999;
+        levels.add(
+          WatchLevel(
+            stop,
+            inLoss ? '跌破停損 → 停損出場' : (stop > c * 1.001 ? '跌破移動停利 → 出場' : '跌破保本 → 出場'),
+            inLoss ? DailyAction.stopLoss : DailyAction.exit,
           ),
         );
+        scenario.add(
+          ScenarioLine(
+            '收盤 < ${_f(stop)}',
+            inLoss ? '停損出場（不攤平、不凹單）' : (stop > c * 1.001 ? '移動停利出場，獲利了結' : '保本出場'),
+            inLoss ? DailyAction.stopLoss : DailyAction.exit,
+          ),
+        );
+        var warn = stop + 0.5 * atr;
+        if (ok(e20) && e20 > warn && e20 < lastClose) warn = e20;
+        final low = math.min(warn, lastClose);
+        if (warn < lastClose) {
+          scenario.add(ScenarioLine('${_f(stop)} ～ ${_f(warn)}', '警戒區：不加碼，準備出場', DailyAction.caution));
+        }
+        final canAddLater = !noAdd && rNow >= 0;
+        scenario.add(
+          ScenarioLine(canAddLater ? '${_f(low)} ～ ${_f(addPrice)}' : '收盤 ≥ ${_f(low)}', '續抱', DailyAction.hold),
+        );
+        if (h.style == HoldStyle.short && target != null && targetHitDate == null) {
+          scenario.add(ScenarioLine('最高碰到 ${_f(target)}', '到 2R 目標：先賣一半，剩下移動停利', DailyAction.sellHalf));
+        }
+        if (!breakeven && (h.style == HoldStyle.short || h.style == HoldStyle.swing)) {
+          scenario.add(
+            ScenarioLine(
+              '收盤 ≥ ${_f(ref + risk)}',
+              takeover ? '漲到 +1R：停損拉到接手當天的價位 ${_f(ref)}' : '漲到 +1R：停損拉到成本 ${_f(c)}（之後最差打平）',
+              DailyAction.hold,
+            ),
+          );
+        }
+        if (canAddLater) {
+          scenario.add(ScenarioLine('收盤 ≥ ${_f(addPrice)} 且量 ≥ 5 日均量', '加碼條件成立（只加贏家，比上一次少）', DailyAction.addOn));
+        }
       }
-      addRules.addAll([
-        '只加贏家：虧損中禁止加碼（禁止向下攤平）。${rNow < 0 ? '目前虧損 ${_r(rNow)}，先不要加。' : ''}',
-        '每次加碼比上一次少：第一次 ≤ 原始股數的一半，第二次 ≤ 四分之一（金字塔）。',
-        '加碼後整筆的停損至少拉到新的平均成本，總風險不超過原本的 1R。',
-        if (h.buys.length > 1) '你已經加碼 ${h.buys.length - 1} 次。',
-      ]);
-    }
 
+      // 加碼時機
+      if (noAdd) {
+        addRules.add('均值回歸型的目標就是 20 日線、空間有限，不加碼；到目標全部出場。');
+      } else {
+        final blocked = rNow < 0 ? AddOnStatus.blocked : null;
+        addPlan.add(
+          AddOnLevel(
+            '① +1R 之後',
+            ref + risk,
+            '收盤站上 ${_f(ref + risk)}（+1R）、停損已拉到成本，這時加碼才不會讓整筆變成虧錢的風險',
+            blocked ?? (breakeven || rNow >= 1 ? AddOnStatus.done : AddOnStatus.waiting),
+          ),
+        );
+        if (h.strategy == 'B' || h.style == HoldStyle.short) {
+          addPlan.add(
+            AddOnLevel(
+              '② 回測 20 日線不破',
+              ok(e20) ? e20 : null,
+              '拉回 20 日線${ok(e20) ? ' ${_f(e20)}' : ''} 附近量縮，再收盤站上前一天高點（回檔買點）',
+              blocked ??
+                  (rNow >= 1 && ok(e20) && (lastClose - e20).abs() <= 0.5 * atr
+                      ? AddOnStatus.ready
+                      : AddOnStatus.waiting),
+            ),
+          );
+        } else {
+          addPlan.add(
+            AddOnLevel(
+              '② 整理後再突破',
+              maxHigh,
+              '買進後高點 ${_f(maxHigh)}：回檔整理後，放量收盤站上這個價（突破加碼）',
+              blocked ?? (rNow >= 1 && lastClose >= maxHigh * 0.995 ? AddOnStatus.ready : AddOnStatus.waiting),
+            ),
+          );
+        }
+        addRules.addAll([
+          '只加贏家：虧損中禁止加碼（禁止向下攤平）。${rNow < 0 ? '目前虧損 ${_r(rNow)}，先不要加。' : ''}',
+          '每次加碼比上一次少：第一次 ≤ 原始股數的一半，第二次 ≤ 四分之一（金字塔）。',
+          '加碼後整筆的停損至少拉到新的平均成本，總風險不超過原本的 1R。',
+          if (h.buys.length > 1) '你已經加碼 ${h.buys.length - 1} 次。',
+        ]);
+      }
+    }
     // 持有週期跟持有方式
     final styleD = h.style.durationClass;
     if (styleD != null && durConfirmed > styleD && rNow >= 1) {
@@ -1013,7 +1190,7 @@ HoldingEval evaluateHolding(
     }
     lines.add(
       '期間最高 ${_p((peak / c - 1) * 100)}、最低 ${_p((minClose / c - 1) * 100)}；'
-      '停損上調 $stopRaises 次${breakeven ? '，已保本' : ''}',
+      '${longMode ? '目前防守價 ${_f(stop)}' : '停損上調 $stopRaises 次${breakeven ? '，已保本' : ''}'}',
     );
     if (!h.closed && peak > c && lastClose < peak) {
       lines.add('從高點回落 ${((1 - lastClose / peak) * 100).toStringAsFixed(1)}%');
@@ -1090,6 +1267,7 @@ HoldingEval evaluateHolding(
     calibration: calibration,
     coneNote: coneNote,
     styleAdvice: styleAdvice,
+    watchLevels: levels,
   );
 }
 
@@ -1189,4 +1367,53 @@ DisciplineStats disciplineStats(Iterable<HoldingEval> evals) {
     }
   }
   return DisciplineStats(onTime, late, pending, early, cost, late == 0 ? 0 : delay / late);
+}
+
+/// 週報：這一週（最近 5 個交易日）持股的變化。
+class WeeklyReport {
+  final String from, to;
+  final double change; // 這週市值變化（元）
+  final List<String> worse, better, up, down;
+  const WeeklyReport(this.from, this.to, this.change, this.worse, this.better, this.up, this.down);
+  bool get quiet => worse.isEmpty && better.isEmpty;
+}
+
+WeeklyReport? weeklyReport(List<(Holding, HoldingEval)> open, String Function(Holding) name) {
+  String? from, to;
+  var change = 0.0;
+  final worse = <String>[], better = <String>[];
+  final moves = <(String, double)>[];
+  for (final (h, e) in open) {
+    final log = e.log;
+    if (log.length < 2) continue;
+    final now = log.last, prev = log[log.length > 5 ? log.length - 6 : 0];
+    from = from == null || prev.date.compareTo(from) < 0 ? prev.date : from;
+    to = to == null || now.date.compareTo(to) > 0 ? now.date : to;
+    change += now.shares * (now.close - prev.close);
+    final a = actionText(prev.action, h.style), b = actionText(now.action, h.style);
+    if (now.action.index < prev.action.index) {
+      worse.add('${name(h)}：$a → $b（${now.reason.split('；').first}）');
+    } else if (now.action.index > prev.action.index) {
+      better.add('${name(h)}：$a → $b');
+    }
+    if (prev.close > 0) moves.add((name(h), (now.close / prev.close - 1) * 100));
+  }
+  if (from == null) return null;
+  moves.sort((a, b) => b.$2.compareTo(a.$2));
+  String fmt((String, double) m) => '${m.$1} ${m.$2 >= 0 ? '+' : ''}${m.$2.toStringAsFixed(1)}%';
+  return WeeklyReport(
+    from,
+    to!,
+    change,
+    worse,
+    better,
+    [
+      for (final m in moves.take(3))
+        if (m.$2 > 0) fmt(m),
+    ],
+    [
+      for (final m in moves.reversed.take(3))
+        if (m.$2 < 0) fmt(m),
+    ],
+  );
 }

@@ -33,6 +33,15 @@ class HoldingsStore extends ChangeNotifier {
   int accTradeCount = 0;
   String? accPath;
 
+  /// stock_acc 同步進來的股票預設用什麼持有方式（個別股票可以另外改）。
+  HoldStyle accDefaultStyle = HoldStyle.long;
+
+  /// 長期持有：從持有期間高點回落多少算「考慮減碼」。
+  double drawdownLimit = 0.25;
+
+  /// 今天（台北時間）的日期，測試時可以換掉。
+  String Function() today = () => _ymd(DateTime.now().toUtc().add(const Duration(hours: 8)));
+
   /// 手動／模擬的持股。
   List<Holding> get manual => List.unmodifiable(_items);
 
@@ -67,6 +76,12 @@ class HoldingsStore extends ChangeNotifier {
       _items
         ..clear()
         ..addAll([for (final x in list) Holding.fromJson(x as Map<String, dynamic>)]);
+      final prefs = j?['prefs'] as Map<String, dynamic>? ?? const {};
+      accDefaultStyle = HoldStyle.values.firstWhere(
+        (s) => s.name == prefs['accDefaultStyle'],
+        orElse: () => HoldStyle.long,
+      );
+      drawdownLimit = (prefs['drawdownLimit'] as num?)?.toDouble() ?? 0.25;
       final s = j?['accSettings'] as Map<String, dynamic>? ?? const {};
       _accSettings
         ..clear()
@@ -91,10 +106,20 @@ class HoldingsStore extends ChangeNotifier {
       accPath = dir?.path;
       if (dir != null) {
         final trades = await src.readTrades();
-        final positions = positionsFromTrades(trades);
+        final positions = positionsFromTrades(trades, style: accDefaultStyle);
+        // 第一次看到、而且已經持有一段時間的股票：從今天開始追蹤，不倒推過去
+        var changed = false;
+        for (final p in positions) {
+          if (p.closed || _accSettings[p.id]?['trackSince'] != null) continue;
+          if (_olderThanTwoWeeks(p.firstBuyDate)) {
+            (_accSettings[p.id] ??= {})['trackSince'] = today();
+            changed = true;
+          }
+        }
         _accItems
           ..clear()
-          ..addAll([for (final p in positions) p.withSettings(_accSettings[p.id])]);
+          ..addAll([for (final p in positions) _applyAcc(p)]);
+        if (changed) await _save();
         accTradeCount = trades.length;
         accLastSync = DateTime.now();
         accError = null;
@@ -107,10 +132,46 @@ class HoldingsStore extends ChangeNotifier {
     }
   }
 
+  /// 套用存下來的設定；沒有自己改過持有方式的，用預設持有習慣。
+  Holding _applyAcc(Holding p) {
+    final s = _accSettings[p.id];
+    final withDefault = s == null || s['style'] == null ? {...?s, 'style': accDefaultStyle.name} : s;
+    return p.withSettings(withDefault);
+  }
+
+  bool _olderThanTwoWeeks(String date) {
+    final d = DateTime.tryParse(date);
+    final t = DateTime.tryParse(today());
+    return d != null && t != null && t.difference(d).inDays > 14;
+  }
+
+  Future<void> setAccDefaultStyle(HoldStyle s) async {
+    accDefaultStyle = s;
+    for (var i = 0; i < _accItems.length; i++) {
+      _accItems[i] = _applyAcc(_accItems[i]);
+    }
+    notifyListeners();
+    await _save();
+  }
+
+  Future<void> setDrawdownLimit(double v) async {
+    drawdownLimit = v;
+    notifyListeners();
+    await _save();
+  }
+
+  /// 從今天重新開始追蹤：之前的走勢、出場訊號都不算。
+  Future<void> restartTracking(String id) async {
+    final h = byId(id);
+    if (h == null) return;
+    await upsert(h.copyWith(trackSince: today()));
+  }
+
   Future<void> _save() => _store.writeNamed(fileName, {
-    'version': 2,
+    'version': 3,
     'holdings': [for (final h in _items) h.toJson()],
     'accSettings': _accSettings,
+    'prefs': {'accDefaultStyle': accDefaultStyle.name, 'drawdownLimit': drawdownLimit},
   });
 
   String newId(String code) => '${code}_${DateTime.now().microsecondsSinceEpoch}';
@@ -127,7 +188,8 @@ class HoldingsStore extends ChangeNotifier {
       if (i >= 0) {
         _items[i] = h;
       } else {
-        _items.add(h);
+        // 新增的持股如果買進日已經是兩週以前，從今天開始追蹤
+        _items.add(h.trackSince == null && _olderThanTwoWeeks(h.firstBuyDate) ? h.copyWith(trackSince: today()) : h);
       }
     }
     notifyListeners();
@@ -172,3 +234,6 @@ String? validateLots(List<BuyLot> buys, List<SellLot> sells) {
   }
   return null;
 }
+
+String _ymd(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';

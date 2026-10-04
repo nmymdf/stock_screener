@@ -9,6 +9,7 @@ import '../../logic/engine/backtest.dart';
 import '../../logic/engine/horizon.dart';
 import '../../logic/engine/scoring.dart';
 import '../../logic/holding_eval.dart';
+import '../../models/holding.dart';
 import '../theme.dart';
 import 'score_widgets.dart';
 
@@ -323,7 +324,10 @@ IconData actionIcon(DailyAction a) => switch (a) {
 class ActionTag extends StatelessWidget {
   final DailyAction action;
   final bool big;
-  const ActionTag(this.action, {super.key, this.big = false});
+
+  /// 持有方式：長期用「健康／觀察／轉弱／考慮減碼」的說法。
+  final HoldStyle? style;
+  const ActionTag(this.action, {super.key, this.big = false, this.style});
 
   @override
   Widget build(BuildContext context) {
@@ -337,7 +341,7 @@ class ActionTag extends StatelessWidget {
           Icon(actionIcon(action), size: big ? 18 : 13, color: Colors.white),
           const SizedBox(width: 4),
           Text(
-            action.label,
+            style == null ? action.label : actionText(action, style!),
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: big ? 15 : 12),
           ),
         ],

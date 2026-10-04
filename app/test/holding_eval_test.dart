@@ -102,12 +102,44 @@ void main() {
     }
   });
 
-  test('長期：收盤連續 3 天在季線下、季線往下彎才出場；中間只是注意', () {
+  test('長期：回落超過 25% 是「考慮減碼」；跌破年線（資料不足用季線）連續 3 天且下彎是「轉弱」；不會出現「應已出場」', () {
     final rise = [for (var i = 0; i < 80; i++) 100.0 + i];
     final fall = [for (var i = 1; i <= 30; i++) 179.0 - i * 2.0];
     final r = eval(holding(dates[79], 179, HoldStyle.long), barsOf(dates, [...rise, ...fall]));
-    expect(r.state, anyOf(HoldState.exit, HoldState.stopLoss));
-    expect(r.headline, anyOf(contains('季線'), contains('跌破停損')));
+    expect(r.state, HoldState.exit);
+    expect(r.headline, contains('回落'));
+    expect(actionText(r.action, HoldStyle.long), '考慮減碼');
+    expect(r.log.every((x) => x.action != DailyAction.overdue && x.action != DailyAction.stopLoss), true);
+
+    // 只跌 10%：沒到 25%，但連續 3 天在季線之下、季線往下彎 → 轉弱
+    final flat = [for (var i = 0; i < 70; i++) 100.0, for (var i = 0; i < 10; i++) 90.0];
+    final w = eval(holding(dates[30], 100, HoldStyle.long), barsOf(dates, flat));
+    expect(actionText(w.action, HoldStyle.long), '轉弱');
+    expect(w.headline, contains('季線'));
+    // 狀態改變那天記在每日紀錄裡
+    expect(w.log.any((x) => x.events.any((ev) => ev.startsWith('狀態：'))), true);
+    // 防守價只會往上
+    for (var i = 1; i < r.log.length; i++) {
+      expect(r.log[i].stop, greaterThanOrEqualTo(r.log[i - 1].stop - 1e-9));
+    }
+  });
+
+  test('接手追蹤：很久以前買的股票，從開始追蹤那天才判斷，之前的跌破不算「應已出場」', () {
+    // 買進後先跌破短線停損（以前的事），之後才開始追蹤
+    final closes = [...base, 97.0, 95, 93, 92, 92, for (var i = 0; i < 20; i++) 92.0 + i * 0.1];
+    final old = holding(dates[39], 100, HoldStyle.swing);
+    expect(eval(old, barsOf(dates, closes)).state, HoldState.stopLoss); // 不接手：倒推出「早就該停損」
+    final h = old.copyWith(trackSince: dates[50]);
+    final r = eval(h, barsOf(dates, closes));
+    expect(r.state, isNot(HoldState.stopLoss));
+    expect(r.log.first.date, dates[50]);
+    expect(r.log.every((x) => x.action != DailyAction.overdue), true);
+    expect(r.notes.join(), contains('接手追蹤'));
+    // 損益仍以實際成本 100 計算
+    expect(r.log.last.pnlPct, closeTo((closes.last / 100 - 1) * 100, 1e-6));
+    // 停損從接手當天的價位算起
+    expect(r.stop, lessThan(closes[50]));
+    expect(r.stop, greaterThan(closes[50] * 0.9));
   });
 
   test('自己設定：跌破你設的停損就停損、碰到目標就提醒獲利了結', () {
@@ -247,7 +279,8 @@ void main() {
       // 長期上漲後買進，接著緩跌：跌破 20 日線、趨勢轉弱、動能消失，但還沒碰到 15% 的長期停損
       final rise = [for (var i = 0; i < 80; i++) 100.0 + i];
       final drift = [for (var i = 1; i <= 45; i++) 179.0 - i * 0.55];
-      final h = holding(dates[79], 179, HoldStyle.long);
+      // 長期持有只把健康度下降當「觀察」；這個提早減碼的規則用在短中線和自己設定
+      final h = holding(dates[79], 179, HoldStyle.custom, manualStop: 140);
       final r = eval(h, barsOf(dates, [...rise, ...drift]));
       final reduce = r.log.where((x) => x.action == DailyAction.sellHalf).toList();
       expect(reduce, isNotEmpty);
@@ -319,5 +352,18 @@ void main() {
       expect(r.state, HoldState.watch);
       expect([r.headline, ...r.reasons].join(), contains('落後同類訊號'));
     });
+  });
+
+  test('週報：這週狀態變差、好轉、漲跌最多都列出來', () {
+    final up = [...base, 102.0, 104, 106, 108, 110, 112];
+    final down = [...base, 99.0, 98, 97, 96.5, 96.2, 96.0];
+    final a = holding(dates[39], 100, HoldStyle.swing);
+    final b = Holding(id: 'y', code: '2317', style: HoldStyle.short, buys: [BuyLot(dates[39], 100, 1000)]);
+    final ea = eval(a, barsOf(dates, up)), eb = eval(b, barsOf(dates, down));
+    final w = weeklyReport([(a, ea), (b, eb)], (h) => h.code)!;
+    expect(w.to, dates[45]);
+    expect(w.up.first, startsWith('2330'));
+    expect(w.down.first, startsWith('2317'));
+    expect(w.worse.any((x) => x.startsWith('2317')), true);
   });
 }

@@ -164,7 +164,7 @@ class _TodayCard extends StatelessWidget {
               runSpacing: 4,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                ActionTag(e.action, big: true),
+                ActionTag(e.action, big: true, style: h.style),
                 if (e.health != null) HealthTag(e.health!),
                 if (e.durationNow != null) Tag('D${e.durationNow} ${kDurationRange[e.durationNow]}', Colors.blueGrey),
                 if (e.asOf != null) Text('依 ${e.asOf} 收盤', style: Theme.of(context).textTheme.bodySmall),
@@ -216,6 +216,12 @@ class _TodayCard extends StatelessWidget {
                     icon: const Icon(Icons.delete_outline, size: 18),
                     label: const Text('刪除'),
                   ),
+                if (!h.closed)
+                  TextButton.icon(
+                    onPressed: () => _restart(context),
+                    icon: const Icon(Icons.restart_alt, size: 18),
+                    label: const Text('從今天重新開始追蹤'),
+                  ),
                 TextButton(
                   onPressed: () => push(StockReportScreen(code: h.code)),
                   child: const Text('看個股分析'),
@@ -234,6 +240,26 @@ class _TodayCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+extension on _TodayCard {
+  Future<void> _restart(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('從今天重新開始追蹤？'),
+        content: const Text(
+          '之前的走勢和出場訊號都不再算（不會再顯示「應已出場」），停損和防守價從今天的價位重新開始；'
+          '買賣紀錄、成本和損益都不會變。',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('重新開始')),
+        ],
+      ),
+    );
+    if (ok == true && context.mounted) await context.read<HoldingsStore>().restartTracking(h.id);
   }
 }
 
@@ -505,7 +531,7 @@ class _LogCardState extends State<_LogCard> {
             value: _eventsOnly,
             onChanged: (v) => setState(() => _eventsOnly = v),
           ),
-          for (final r in shown) _DayTile(r: r),
+          for (final r in shown) _DayTile(r: r, style: widget.h.style),
           if (rows.length > shown.length)
             TextButton(onPressed: () => setState(() => _all = true), child: Text('顯示全部 ${rows.length} 筆')),
         ],
@@ -516,7 +542,8 @@ class _LogCardState extends State<_LogCard> {
 
 class _DayTile extends StatelessWidget {
   final DayRecord r;
-  const _DayTile({required this.r});
+  final HoldStyle style;
+  const _DayTile({required this.r, required this.style});
 
   @override
   Widget build(BuildContext context) {
@@ -539,7 +566,7 @@ class _DayTile extends StatelessWidget {
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
               Text(r.date, style: const TextStyle(fontWeight: FontWeight.w700)),
-              ActionTag(r.action),
+              ActionTag(r.action, style: style),
               Text(
                 '收盤 ${f2(r.close)}${r.changePct == null ? '' : '（${pctTxt(r.changePct)}）'}',
                 style: const TextStyle(fontSize: 13),

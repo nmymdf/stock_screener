@@ -32,7 +32,10 @@ class HoldingsScreen extends StatefulWidget {
 
 class _HoldingsScreenState extends State<HoldingsScreen> {
   bool _showClosed = false;
+  bool _showNormal = false;
+  bool _table = false;
   HoldingSource _source = HoldingSource.manual;
+  bool _picked = false;
 
   static String _groupName(HoldingSource s) => s == HoldingSource.manual ? '手動／模擬' : 'stock_acc 記帳';
 
@@ -41,7 +44,12 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     final holdings = context.watch<HoldingsStore>();
     final store = context.watch<HistoryStore>();
     final showAcc = holdings.accAvailable;
-    final src = showAcc ? _source : HoldingSource.manual;
+    // 還沒自己切換過：手動那組是空的、stock_acc 有持股，就直接打開 stock_acc 那組
+    final manualOpen = holdings.manual.where((h) => !h.closed).length;
+    final accOpen = holdings.accHoldings.where((h) => !h.closed).length;
+    final src = !showAcc
+        ? HoldingSource.manual
+        : (_picked ? _source : (manualOpen == 0 && accOpen > 0 ? HoldingSource.stockAcc : HoldingSource.manual));
     final group = holdings.of(src);
     final open = [for (final h in group.where((h) => !h.closed)) (h, evalFor(context, h))]
       ..sort((a, b) => a.$2.action.index.compareTo(b.$2.action.index));
@@ -54,6 +62,10 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
       value += e.marketValue ?? 0;
       unreal += e.unrealized ?? 0;
     }
+    bool isNormal(HoldingEval e) =>
+        e.action == DailyAction.hold || e.action == DailyAction.pending || e.action == DailyAction.addOn;
+    final attention = open.where((x) => !isNormal(x.$2)).toList();
+    final normal = open.where((x) => isNormal(x.$2)).toList();
     final other = src == HoldingSource.manual ? HoldingSource.stockAcc : HoldingSource.manual;
     final otherUrgent = showAcc
         ? holdings.of(other).where((h) => !h.closed && evalFor(context, h).action.needsAction).length
@@ -83,13 +95,19 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
                 ),
             ],
             selected: {src},
-            onSelectionChanged: (v) => setState(() => _source = v.first),
+            onSelectionChanged: (v) => setState(() {
+              _source = v.first;
+              _picked = true;
+            }),
           ),
           const SizedBox(height: 8),
           if (src == HoldingSource.stockAcc) _AccBar(holdings: holdings),
           if (otherUrgent > 0)
             TextButton.icon(
-              onPressed: () => setState(() => _source = other),
+              onPressed: () => setState(() {
+                _source = other;
+                _picked = true;
+              }),
               icon: Icon(Icons.priority_high, color: actionColor(DailyAction.stopLoss), size: 18),
               label: Text(
                 '「${_groupName(other)}」有 $otherUrgent 檔需要處理，點這裡切過去',
@@ -97,7 +115,9 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
               ),
             ),
         ],
+        _SettingsCard(holdings: holdings, showAcc: showAcc),
         if (open.isNotEmpty) _TodaySummary(open: open, value: value, unreal: unreal, realized: stats.realized),
+        if (open.isNotEmpty) _WeeklyCard(open: open),
         const SizedBox(height: 6),
         if (src == HoldingSource.manual)
           FilledButton.icon(
@@ -123,9 +143,68 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           ),
         if (open.isEmpty && src == HoldingSource.stockAcc && holdings.accError == null)
           const SectionCard(child: Text('stock_acc 目前沒有持有中的股票。在 stock_acc 記帳買進後，回來按「同步 stock_acc」就會出現在這裡。')),
-        CardGrid(
-          children: [for (final (h, e) in open) _HoldingCard(h: h, e: e)],
-        ),
+        if (open.isNotEmpty) ...[
+          Row(
+            children: [
+              Expanded(
+                child: Text('持有中 ${open.length} 檔', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              ),
+              SegmentedButton<bool>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: false, icon: Icon(Icons.view_agenda_outlined, size: 18), label: Text('卡片')),
+                  ButtonSegment(value: true, icon: Icon(Icons.table_rows_outlined, size: 18), label: Text('表格')),
+                ],
+                selected: {_table},
+                onSelectionChanged: (v) => setState(() => _table = v.first),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (_table)
+            _HoldingsTable(rows: open)
+          else ...[
+            if (attention.isNotEmpty) ...[
+              Text(
+                '需要注意 ${attention.length} 檔',
+                style: TextStyle(fontWeight: FontWeight.w700, color: actionColor(DailyAction.caution)),
+              ),
+              const SizedBox(height: 4),
+              CardGrid(
+                children: [for (final (h, e) in attention) _HoldingCard(h: h, e: e)],
+              ),
+            ],
+            if (normal.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              InkWell(
+                onTap: () => setState(() => _showNormal = !_showNormal),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    children: [
+                      Icon(Icons.check_circle, color: actionColor(DailyAction.hold), size: 18),
+                      const SizedBox(width: 6),
+                      Text(
+                        '正常 ${normal.length} 檔',
+                        style: TextStyle(fontWeight: FontWeight.w700, color: actionColor(DailyAction.hold)),
+                      ),
+                      const SizedBox(width: 6),
+                      if (attention.isNotEmpty) ...[
+                        Text(_showNormal ? '收起' : '展開', style: Theme.of(context).textTheme.bodySmall),
+                        Icon(_showNormal ? Icons.expand_less : Icons.expand_more, size: 18),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              if (_showNormal || attention.isEmpty)
+                CardGrid(
+                  children: [for (final (h, e) in normal) _HoldingCard(h: h, e: e)],
+                ),
+            ],
+          ],
+        ],
+
         if (closed.isNotEmpty) ...[
           const SizedBox(height: 12),
           SectionCard(
@@ -243,7 +322,7 @@ class _HoldingCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  ActionTag(e.action),
+                  ActionTag(e.action, style: h.style),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -264,9 +343,9 @@ class _HoldingCard extends StatelessWidget {
                   runSpacing: 3,
                   children: [
                     if (e.health != null) HealthTag(e.health!),
-                    if (e.durationNow != null)
+                    if (e.durationNow != null && h.style != HoldStyle.long)
                       Tag('D${e.durationNow} ${kDurationRange[e.durationNow]}', Colors.blueGrey),
-                    if (e.summary != null) Tag('持有第 ${e.summary!.days} 天', Colors.blueGrey),
+                    if (e.summary != null) Tag('${h.takenOver ? '追蹤' : '持有'}第 ${e.summary!.days} 天', Colors.blueGrey),
                   ],
                 ),
               ],
@@ -293,7 +372,8 @@ class _HoldingCard extends StatelessWidget {
                       '損益 ${moneyTxt(e.unrealized!)}（${pctTxt(e.unrealizedPct)}）',
                       style: small?.copyWith(color: changeColor(context, e.unrealized!), fontWeight: FontWeight.w600),
                     ),
-                  if (e.stop != null) Text('停損 ${f2(e.stop!)}', style: small),
+                  if (e.stop != null) Text('${h.style == HoldStyle.long ? '防守價' : '停損'} ${f2(e.stop!)}', style: small),
+                  if (h.takenOver) Text('${h.trackSince} 起追蹤', style: small),
                   if (e.target != null && !e.halfDone && e.state != HoldState.stopLoss)
                     Text('目標 ${f2(e.target!)}', style: small),
                 ],
@@ -324,7 +404,7 @@ class _ClosedRow extends StatelessWidget {
   }
 }
 
-/// 今日摘要：總覽數字、依建議分組的持股、明天要盯的價位。
+/// 今日摘要：總覽數字、需要注意的（依建議分組）、其他都正常、只列很接近關鍵價位的。
 class _TodaySummary extends StatelessWidget {
   final List<(Holding, HoldingEval)> open;
   final double value, unreal, realized;
@@ -333,17 +413,28 @@ class _TodaySummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     String name(Holding h) => '${h.code} ${kBuiltinStocksByCode[h.code]?.name ?? ''}'.trim();
-    final groups = <DailyAction, List<Holding>>{};
+    final groups = <String, (DailyAction, HoldStyle, List<Holding>)>{};
+    var normal = 0;
     for (final (h, e) in open) {
-      (groups[e.action] ??= []).add(h);
+      if (e.action == DailyAction.hold || e.action == DailyAction.pending) {
+        normal++;
+        continue;
+      }
+      final label = actionText(e.action, h.style);
+      final g = groups[label];
+      groups[label] = (e.action, h.style, [...?g?.$3, h]);
     }
-    final urgent = open.where((x) => x.$2.action.needsAction).length;
-    final watchLines = <String>[];
+    final ordered = groups.values.toList()..sort((a, b) => a.$1.index.compareTo(b.$1.index));
+    final attention = open.length - normal;
+    // 只列離關鍵價位 3% 以內的
+    final near = <(double, String)>[];
     for (final (h, e) in open) {
-      if (e.scenario.isEmpty) continue;
-      final s = e.scenario.first;
-      watchLines.add('${name(h)}：${s.when} → ${s.action}');
+      final d = e.distToLevelPct, l = e.nearestLevel;
+      if (d != null && l != null && d <= 3) {
+        near.add((d, '${name(h)}：收盤 < ${f2(l.price)}（差 ${d.toStringAsFixed(1)}%）→ ${l.what}'));
+      }
     }
+    near.sort((a, b) => a.$1.compareTo(b.$1));
     final small = Theme.of(context).textTheme.bodySmall;
     return Card(
       child: Padding(
@@ -364,33 +455,223 @@ class _TodaySummary extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              urgent > 0 ? '今天有 $urgent 檔需要處理（排在最上面）' : '今天沒有需要出場的持股',
+              attention > 0 ? '今天需要注意 $attention 檔，其他 $normal 檔正常' : '全部 $normal 檔都正常，今天不用做什麼',
               style: TextStyle(
-                fontWeight: FontWeight.w600,
-                color: urgent > 0 ? actionColor(DailyAction.stopLoss) : actionColor(DailyAction.hold),
+                fontWeight: FontWeight.w700,
+                color: attention > 0 ? actionColor(DailyAction.caution) : actionColor(DailyAction.hold),
               ),
             ),
             const SizedBox(height: 6),
-            for (final a in DailyAction.values)
-              if (groups[a] != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      SizedBox(
-                        width: 132,
-                        child: Align(alignment: Alignment.centerLeft, child: ActionTag(a)),
+            for (final (a, style, hs) in ordered)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: 132,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: ActionTag(a, style: style),
                       ),
-                      Expanded(child: Text(groups[a]!.map(name).join('、'), style: const TextStyle(fontSize: 13))),
-                    ],
-                  ),
+                    ),
+                    Expanded(child: Text(hs.map(name).join('、'), style: const TextStyle(fontSize: 13))),
+                  ],
                 ),
-            if (watchLines.isNotEmpty) ...[
+              ),
+            if (near.isNotEmpty) ...[
               const SizedBox(height: 8),
-              const Text('明天要盯的價位', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-              for (final l in watchLines.take(6)) Text('• $l', style: small?.copyWith(fontSize: 12)),
+              const Text('接近關鍵價位（3% 以內）', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              for (final l in near.take(8)) Text('• ${l.$2}', style: small?.copyWith(fontSize: 12)),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 週報：最近 5 個交易日的變化。
+class _WeeklyCard extends StatelessWidget {
+  final List<(Holding, HoldingEval)> open;
+  const _WeeklyCard({required this.open});
+
+  @override
+  Widget build(BuildContext context) {
+    final w = weeklyReport(open, (h) => '${h.code} ${kBuiltinStocksByCode[h.code]?.name ?? ''}'.trim());
+    if (w == null) return const SizedBox.shrink();
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          leading: const Icon(Icons.event_note_outlined),
+          title: const Text('本週報告', style: TextStyle(fontWeight: FontWeight.w800)),
+          subtitle: Text(
+            '${w.from} ～ ${w.to}・市值 ${moneyTxt(w.change)}'
+            '${w.quiet ? '・狀態沒有變化' : '・${w.worse.length} 檔變差、${w.better.length} 檔好轉'}',
+            style: TextStyle(fontSize: 12, color: changeColor(context, w.change)),
+          ),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          expandedCrossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (w.worse.isNotEmpty) ...[
+              const Text('狀態變差', style: TextStyle(fontWeight: FontWeight.w700)),
+              Bullets(w.worse, BulletKind.warn),
+            ],
+            if (w.better.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              const Text('狀態好轉', style: TextStyle(fontWeight: FontWeight.w700)),
+              Bullets(w.better, BulletKind.good),
+            ],
+            if (w.up.isNotEmpty) Text('本週漲最多：${w.up.join('、')}', style: const TextStyle(fontSize: 13)),
+            if (w.down.isNotEmpty) Text('本週跌最多：${w.down.join('、')}', style: const TextStyle(fontSize: 13)),
+            if (w.quiet) const Text('這週所有持股的狀態都沒有改變。', style: TextStyle(fontSize: 13)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 持股設定：stock_acc 的預設持有習慣、長期的回落容忍。
+class _SettingsCard extends StatelessWidget {
+  final HoldingsStore holdings;
+  final bool showAcc;
+  const _SettingsCard({required this.holdings, required this.showAcc});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          leading: const Icon(Icons.tune),
+          title: const Text('持股設定', style: TextStyle(fontWeight: FontWeight.w700)),
+          subtitle: Text(
+            '${showAcc ? 'stock_acc 預設：${holdings.accDefaultStyle.label}・' : ''}'
+            '長期回落容忍 ${(holdings.drawdownLimit * 100).round()}%',
+            style: const TextStyle(fontSize: 12),
+          ),
+          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          expandedCrossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (showAcc) ...[
+              const Text('stock_acc 同步進來的股票，預設的持有習慣', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 6,
+                children: [
+                  for (final s in const [HoldStyle.long, HoldStyle.swing, HoldStyle.short])
+                    ChoiceChip(
+                      label: Text('${s.label}（${s.period}）'),
+                      selected: holdings.accDefaultStyle == s,
+                      onSelected: (_) => holdings.setAccDefaultStyle(s),
+                    ),
+                ],
+              ),
+              Text('個別股票可以在「⋮ → 修改設定」另外改，改過的不受這裡影響。', style: Theme.of(context).textTheme.bodySmall),
+              const SizedBox(height: 10),
+            ],
+            const Text('長期持有：從高點回落多少算「考慮減碼」', style: TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final v in const [0.2, 0.25, 0.3, 0.35])
+                  ChoiceChip(
+                    label: Text('${(v * 100).round()}%'),
+                    selected: (holdings.drawdownLimit - v).abs() < 0.001,
+                    onSelected: (_) => holdings.setDrawdownLimit(v),
+                  ),
+              ],
+            ),
+            Text('回落一半（例如 25% 的一半 12.5%）就先列「觀察」，超過設定值才是「考慮減碼」。', style: Theme.of(context).textTheme.bodySmall),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 表格：一檔一行，持股多的時候比較好看。
+class _HoldingsTable extends StatelessWidget {
+  final List<(Holding, HoldingEval)> rows;
+  const _HoldingsTable({required this.rows});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    const widths = [118.0, 150.0, 80.0, 86.0, 86.0, 86.0, 110.0, 96.0, 70.0];
+    const heads = ['狀態', '股票', '股數', '成本', '現價', '損益%', '損益（元）', '離關鍵價', '健康度'];
+    Widget cell(int i, Widget child, {bool head = false}) => Container(
+      width: widths[i],
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      alignment: i >= 2 ? Alignment.centerRight : Alignment.centerLeft,
+      decoration: BoxDecoration(
+        color: head ? scheme.surfaceContainerLow : null,
+        border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
+      ),
+      child: child,
+    );
+    Text txt(String s, {Color? color, bool bold = false}) => Text(
+      s,
+      overflow: TextOverflow.ellipsis,
+      style: TextStyle(fontSize: 13, color: color, fontWeight: bold ? FontWeight.w700 : null),
+    );
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                for (var i = 0; i < heads.length; i++)
+                  cell(i, txt(heads[i], bold: true, color: scheme.onSurfaceVariant), head: true),
+              ],
+            ),
+            for (final (h, e) in rows)
+              InkWell(
+                onTap: () =>
+                    Navigator.of(context).push(MaterialPageRoute(builder: (_) => HoldingDetailScreen(id: h.id))),
+                child: Row(
+                  children: [
+                    cell(0, ActionTag(e.action, style: h.style)),
+                    cell(1, txt('${h.code} ${kBuiltinStocksByCode[h.code]?.name ?? ''}', bold: true)),
+                    cell(2, txt('${h.shares}')),
+                    cell(3, txt(f2(h.avgCost))),
+                    cell(4, txt(e.lastClose == null ? '—' : f2(e.lastClose!))),
+                    cell(
+                      5,
+                      txt(pctTxt(e.unrealizedPct), color: changeColor(context, e.unrealizedPct ?? 0), bold: true),
+                    ),
+                    cell(
+                      6,
+                      txt(
+                        e.unrealized == null ? '—' : moneyTxt(e.unrealized!),
+                        color: changeColor(context, e.unrealized ?? 0),
+                      ),
+                    ),
+                    cell(
+                      7,
+                      txt(
+                        e.distToLevelPct == null ? '—' : '${e.distToLevelPct!.toStringAsFixed(1)}%',
+                        color: (e.distToLevelPct ?? 99) <= 3 ? actionColor(DailyAction.caution) : null,
+                      ),
+                    ),
+                    cell(
+                      8,
+                      txt(
+                        e.health == null ? '—' : '${e.health}',
+                        color: e.health == null ? null : healthColor(e.health!),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
           ],
         ),
       ),

@@ -296,8 +296,9 @@ void main() {
     await tester.pageBack();
     await tester.pumpAndSettle();
     expect(find.text('今日摘要'), findsOneWidget);
-    // 今日摘要裡列一次、持股卡片一次
-    expect(find.text('2330 台積電'), findsNWidgets(2));
+    // 正常的持股不會在摘要裡一一列名（只列需要注意的），卡片上看得到
+    expect(find.textContaining('正常'), findsWidgets);
+    expect(find.text('2330 台積電'), findsWidgets);
 
     await tester.tap(find.text('2330 台積電').last);
     await tester.pumpAndSettle();

@@ -35,8 +35,9 @@ extension HoldStyleInfo on HoldStyle {
       '停損：進場價 − 2.5 ATR（或推薦時的停損）。漲到 +1R 停損拉到成本（保本），之後用「最高價 − 3 ATR」'
           '移動停利一路抱住，不設固定目標、不設時間停損。',
     HoldStyle.long =>
-      '停損：虧損 15%。趨勢出場：收盤連續 3 天跌破 60 日均線（季線）且季線往下彎；有一年資料時，'
-          '跌破 240 日均線（年線）也提醒。不主動停利、不設時間停損。',
+      '看大方向、少打擾：狀態分成健康、觀察、轉弱、考慮減碼。收盤連續 3 天在年線（240 日均線）之下、'
+          '而且年線往下彎 → 轉弱；從持有期間的最高收盤回落超過設定的比例（預設 25%）→ 考慮減碼。'
+          '跌破年線、回落一半以上、健康度下降只是「觀察」。不主動停利、不設時間停損，狀態改變那天才提醒。',
     HoldStyle.custom => '用你自己填的停損價和目標價：收盤跌破停損就停損，碰到目標就提醒獲利了結。',
   };
 }
@@ -118,6 +119,10 @@ class Holding {
 
   final HoldingSource source;
 
+  /// 從哪一天開始用規則追蹤（已經持有一段時間才加進來的股票，不倒推過去的走勢）。
+  /// null = 從第一次買進那天開始。
+  final String? trackSince;
+
   const Holding({
     required this.id,
     required this.code,
@@ -136,6 +141,7 @@ class Holding {
     this.confidence,
     this.thesis = const [],
     this.source = HoldingSource.manual,
+    this.trackSince,
   });
 
   bool get fromStockAcc => source == HoldingSource.stockAcc;
@@ -157,6 +163,15 @@ class Holding {
       buys.where((b) => b.date.compareTo(date) <= 0).fold(0, (a, b) => a + b.shares) -
       sells.where((s) => s.date.compareTo(date) <= 0).fold(0, (a, b) => a + b.shares);
 
+  /// 規則從哪天開始判斷：第一次買進日和追蹤起點取比較晚的那個。
+  String get evalStart {
+    final b = firstBuyDate;
+    return trackSince != null && trackSince!.compareTo(b) > 0 ? trackSince! : b;
+  }
+
+  /// 是不是「已經持有一段時間才開始追蹤」。
+  bool get takenOver => trackSince != null && trackSince!.compareTo(firstBuyDate) > 0;
+
   String get firstBuyDate => (buys.map((b) => b.date).toList()..sort()).first;
   String? get lastSellDate => sells.isEmpty ? null : (sells.map((s) => s.date).toList()..sort()).last;
 
@@ -167,6 +182,7 @@ class Holding {
     Object? manualStop = _keep,
     Object? manualTarget = _keep,
     Object? note = _keep,
+    Object? trackSince = _keep,
   }) => Holding(
     id: id,
     code: code,
@@ -185,6 +201,7 @@ class Holding {
     confidence: confidence,
     thesis: thesis,
     source: source,
+    trackSince: identical(trackSince, _keep) ? this.trackSince : trackSince as String?,
   );
 
   /// 只有台股選股自己的設定（持有方式、停損、目標、備註、買進判斷），
@@ -202,6 +219,7 @@ class Holding {
     'duration': ?duration,
     'confidence': ?confidence,
     if (thesis.isNotEmpty) 'thesis': thesis,
+    'trackSince': ?trackSince,
   };
 
   /// 套用之前存下來的設定（買賣紀錄不變）。
@@ -226,6 +244,7 @@ class Holding {
       confidence: j['confidence'] as String?,
       thesis: [for (final x in (j['thesis'] as List? ?? const [])) x as String],
       source: source,
+      trackSince: j['trackSince'] as String?,
     );
   }
 
@@ -247,6 +266,7 @@ class Holding {
     'confidence': ?confidence,
     if (thesis.isNotEmpty) 'thesis': thesis,
     if (source != HoldingSource.manual) 'source': source.name,
+    'trackSince': ?trackSince,
   };
 
   static Holding fromJson(Map<String, dynamic> j) {
@@ -269,6 +289,7 @@ class Holding {
       confidence: j['confidence'] as String?,
       thesis: [for (final x in (j['thesis'] as List? ?? const [])) x as String],
       source: HoldingSource.values.firstWhere((s) => s.name == j['source'], orElse: () => HoldingSource.manual),
+      trackSince: j['trackSince'] as String?,
     );
   }
 }

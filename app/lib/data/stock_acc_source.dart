@@ -119,7 +119,7 @@ class StockAccSource {
 
 /// 把交易整理成持股：每檔股票從 0 股變成有股數就是一筆新持股，賣到 0 就結案。
 /// 不同帳戶、不同群體的同一檔股票合併計算。
-List<Holding> positionsFromTrades(List<AccTrade> trades) {
+List<Holding> positionsFromTrades(List<AccTrade> trades, {HoldStyle style = HoldStyle.long}) {
   final byCode = <String, List<AccTrade>>{};
   for (final t in trades) {
     (byCode[t.code] ??= []).add(t);
@@ -143,7 +143,7 @@ List<Holding> positionsFromTrades(List<AccTrade> trades) {
         Holding(
           id: 'acc_${e.key}_${buys!.first.date}',
           code: e.key,
-          style: HoldStyle.swing,
+          style: style,
           buys: buys!,
           sells: sells!,
           source: HoldingSource.stockAcc,

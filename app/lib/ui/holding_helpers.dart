@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/history_store.dart';
+import '../data/holdings_store.dart';
 import '../data/stock_industry.dart';
 import '../logic/engine/signals.dart';
 import '../logic/holding_eval.dart';
@@ -28,6 +29,7 @@ HoldingEval evalFor(BuildContext context, Holding h) {
     regimeByDate: a?.regimeByDate,
     taiex: store.taiexByDate,
     calibration: a?.calibration.byCode(h.strategy, regime),
+    drawdownLimit: context.select<HoldingsStore, double>((s) => s.drawdownLimit),
   );
 }
 
