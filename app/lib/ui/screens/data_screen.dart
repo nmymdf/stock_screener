@@ -27,16 +27,17 @@ class DataScreen extends StatelessWidget {
                 const Expanded(
                   child: Text(
                     '回看天數（日曆天）\n建議 400 天：200 日均線、52 週新高、240 日線廣度都需要一年左右的資料；'
-                    '天數越多第一次抓越久',
+                    '要回測兩年選 800 天。天數越多第一次抓越久',
                     style: TextStyle(fontSize: 13),
                   ),
                 ),
                 DropdownButton<int>(
-                  value: const [120, 180, 270, 400, 550].contains(store.lookbackDays) ? store.lookbackDays : null,
+                  value: const [120, 180, 270, 400, 550, 800].contains(store.lookbackDays) ? store.lookbackDays : null,
                   hint: Text('${store.lookbackDays} 天'),
                   underline: const SizedBox.shrink(),
                   items: [
-                    for (final d in const [120, 180, 270, 400, 550]) DropdownMenuItem(value: d, child: Text('$d 天')),
+                    for (final d in const [120, 180, 270, 400, 550, 800])
+                      DropdownMenuItem(value: d, child: Text(d == 800 ? '800 天（2 年）' : '$d 天')),
                   ],
                   onChanged: store.syncing
                       ? null

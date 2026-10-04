@@ -5,51 +5,12 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../app_build_info.dart';
 import '../../logic/engine/backtest.dart';
 import '../../logic/engine/horizon.dart';
 import '../../logic/engine/scoring.dart';
 import '../../logic/holding_eval.dart';
 import '../theme.dart';
 import 'score_widgets.dart';
-
-/// 每個畫面最上面的抬頭：左邊版本，右邊作者（金色斜體）。
-class AppBanner extends StatelessWidget {
-  const AppBanner({super.key});
-
-  static const gold = Color(0xFFC9A227);
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Material(
-      color: scheme.surface,
-      child: SafeArea(
-        bottom: false,
-        child: Container(
-          height: 30,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: scheme.outlineVariant)),
-          ),
-          child: Row(
-            children: [
-              Text(
-                '台股選股 $kAppVersion',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: scheme.primary),
-              ),
-              const Spacer(),
-              const Text(
-                '作者: ArchieKUO',
-                style: TextStyle(fontSize: 13, fontStyle: FontStyle.italic, fontWeight: FontWeight.w600, color: gold),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
 
 Color opportunityColor(Opportunity o) => switch (o) {
   Opportunity.resonance => const Color(0xFFB71C1C),
@@ -256,6 +217,7 @@ class ConeChart extends StatelessWidget {
         markDay,
         Theme.of(context).colorScheme.primary,
         Theme.of(context).colorScheme.onSurfaceVariant,
+        Theme.of(context).textTheme.bodySmall!,
       ),
     ),
   );
@@ -266,7 +228,8 @@ class _ConePainter extends CustomPainter {
   final double? mark;
   final int? markDay;
   final Color color, text;
-  _ConePainter(this.cone, this.mark, this.markDay, this.color, this.text);
+  final TextStyle base;
+  _ConePainter(this.cone, this.mark, this.markDay, this.color, this.text, this.base);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -288,7 +251,7 @@ class _ConePainter extends CustomPainter {
     void label(String s, Offset o) {
       tp.text = TextSpan(
         text: s,
-        style: TextStyle(fontSize: 10, color: text),
+        style: base.copyWith(fontSize: 10, color: text),
       );
       tp.layout();
       tp.paint(canvas, o);

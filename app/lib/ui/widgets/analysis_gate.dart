@@ -5,6 +5,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../layout.dart';
 import '../../data/history_store.dart';
 import '../../logic/engine/analysis.dart';
 import 'common.dart';
@@ -52,7 +53,7 @@ class AnalysisGate extends StatelessWidget {
       }
       children.addAll(builder(context, a));
     }
-    return ListView(padding: const EdgeInsets.fromLTRB(14, 14, 14, 24), children: children);
+    return ListView(padding: pagePadding(context), children: children);
   }
 }
 

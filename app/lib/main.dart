@@ -4,8 +4,9 @@ import 'package:provider/provider.dart';
 import 'data/history_store.dart';
 import 'data/holdings_store.dart';
 import 'ui/home.dart';
+import 'ui/layout.dart';
 import 'ui/theme.dart';
-import 'ui/widgets/horizon_widgets.dart';
+import 'ui/widgets/app_banner.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,21 +26,39 @@ class StockScreenerApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: store),
         ChangeNotifierProvider.value(value: holdings),
       ],
-      child: MaterialApp(
-        title: '台股選股',
-        debugShowCheckedModeBanner: false,
-        theme: buildTheme(Brightness.light),
-        darkTheme: buildTheme(Brightness.dark),
-        // 每個畫面最上面都有版本和作者
-        builder: (context, child) => Column(
-          children: [
-            const AppBanner(),
-            Expanded(
-              child: MediaQuery.removePadding(context: context, removeTop: true, child: child ?? const SizedBox()),
-            ),
-          ],
-        ),
-        home: const _Root(),
+      child: Builder(
+        builder: (context) {
+          final themeMode = context.select<HistoryStore, ThemeMode>((s) => s.themeMode);
+          final fontScale = context.select<HistoryStore, double?>((s) => s.fontScale);
+          return MaterialApp(
+            title: '台股選股',
+            debugShowCheckedModeBanner: false,
+            theme: buildTheme(Brightness.light),
+            darkTheme: buildTheme(Brightness.dark),
+            themeMode: themeMode,
+            // 每個畫面最上面都有抬頭；字體依視窗寬度自動放大（也可以在抬頭手動調整）
+            builder: (context, child) {
+              final mq = MediaQuery.of(context);
+              final scale = fontScale ?? autoFontScale(mq.size.width);
+              return MediaQuery(
+                data: mq.copyWith(textScaler: TextScaler.linear(scale)),
+                child: Column(
+                  children: [
+                    const AppBanner(),
+                    Expanded(
+                      child: MediaQuery.removePadding(
+                        context: context,
+                        removeTop: true,
+                        child: child ?? const SizedBox(),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+            home: const _Root(),
+          );
+        },
       ),
     );
   }

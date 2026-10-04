@@ -5,6 +5,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../layout.dart';
 import '../../logic/engine/analysis.dart';
 import '../../logic/engine/horizon.dart';
 import '../../logic/engine/industry_engine.dart';
@@ -50,15 +51,12 @@ class _RecommendScreenState extends State<RecommendScreen> {
         final today = a.today;
         int count(int d) => base.where((s) => s.duration.cls == d).length;
         return [
-          Row(
-            children: [
-              const Expanded(
-                child: Text('今日推薦', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-              ),
-              Text('資料截至 ${a.latestDate} 收盤', style: Theme.of(context).textTheme.bodySmall),
-            ],
+          PageHeader(
+            icon: Icons.star,
+            title: '今日推薦',
+            subtitle: '市場 → 產業 → 個股 → 交易計畫，每天收盤後分析全部上市櫃股票',
+            trailing: Text('資料截至 ${a.latestDate} 收盤', style: Theme.of(context).textTheme.bodySmall),
           ),
-          const SizedBox(height: 8),
           if (today != null) _MarketBanner(day: today),
           const SizedBox(height: 6),
           _FunnelCard(f: a.funnel),
@@ -106,10 +104,14 @@ class _RecommendScreenState extends State<RecommendScreen> {
                 child: Text(_emptyText(a, today), style: const TextStyle(fontSize: 13, height: 1.5)),
               ),
             ),
-          for (var i = 0; i < list.length; i++)
-            _mode == _Mode.watch
-                ? _WatchCard(s: list[i])
-                : _RecCard(rank: i + 1, s: list[i], rejected: _mode == _Mode.rejected),
+          CardGrid(
+            children: [
+              for (var i = 0; i < list.length; i++)
+                _mode == _Mode.watch
+                    ? _WatchCard(s: list[i])
+                    : _RecCard(rank: i + 1, s: list[i], rejected: _mode == _Mode.rejected),
+            ],
+          ),
           const SizedBox(height: 10),
           const DisclaimerCard(
             text:

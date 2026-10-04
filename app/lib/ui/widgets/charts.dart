@@ -58,7 +58,7 @@ class SimpleChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final small = TextStyle(fontSize: 10, color: scheme.onSurfaceVariant);
+    final small = Theme.of(context).textTheme.bodySmall!.copyWith(fontSize: 10, color: scheme.onSurfaceVariant);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

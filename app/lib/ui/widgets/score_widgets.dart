@@ -269,13 +269,25 @@ class SectionCard extends StatelessWidget {
         children: [
           if (title != null)
             Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: 10),
               child: Row(
                 children: [
-                  Expanded(
-                    child: Text(title!, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                  Container(
+                    width: 4,
+                    height: 18,
+                    margin: const EdgeInsets.only(right: 8),
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).colorScheme.primary,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
                   ),
-                  ?trailing,
+                  Expanded(
+                    child: Text(title!, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+                  ),
+                  if (trailing != null)
+                    Flexible(
+                      child: Align(alignment: Alignment.centerRight, child: trailing),
+                    ),
                 ],
               ),
             ),

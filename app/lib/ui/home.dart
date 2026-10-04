@@ -4,7 +4,9 @@ library;
 
 import 'package:flutter/material.dart';
 
+import 'layout.dart';
 import 'screens/backtest_screen.dart';
+import 'screens/compare_screen.dart';
 import 'screens/holdings_screen.dart';
 import 'screens/industry_screen.dart';
 import 'screens/market_screen.dart';
@@ -18,7 +20,7 @@ class HomeShell extends StatefulWidget {
   static void goTo(BuildContext context, int index) =>
       context.findAncestorStateOfType<_HomeShellState>()?._select(index);
 
-  static const recommend = 0, holdings = 1, market = 2, industry = 3, backtest = 4, tools = 5;
+  static const recommend = 0, holdings = 1, compare = 2, market = 3, industry = 4, backtest = 5, tools = 6;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -32,6 +34,7 @@ class _HomeShellState extends State<HomeShell> {
   static const _tabs = [
     (Icons.star_outline, Icons.star, '推薦'),
     (Icons.account_balance_wallet_outlined, Icons.account_balance_wallet, '持股'),
+    (Icons.compare_arrows_outlined, Icons.compare_arrows, '比較'),
     (Icons.speed_outlined, Icons.speed, '市場'),
     (Icons.category_outlined, Icons.category, '產業'),
     (Icons.science_outlined, Icons.science, '回測'),
@@ -41,17 +44,22 @@ class _HomeShellState extends State<HomeShell> {
   Widget _body() => switch (_index) {
     0 => const RecommendScreen(),
     1 => const HoldingsScreen(),
-    2 => const MarketScreen(),
-    3 => const IndustryScreen(),
-    4 => const BacktestScreen(),
+    2 => const CompareScreen(),
+    3 => const MarketScreen(),
+    4 => const IndustryScreen(),
+    5 => const BacktestScreen(),
     _ => const ToolsScreen(),
   };
 
   @override
   Widget build(BuildContext context) {
-    final wide = MediaQuery.sizeOf(context).width >= 760;
+    final width = MediaQuery.sizeOf(context).width;
+    final wide = width >= 760;
     final body = Center(
-      child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: _body()),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: kMaxContentWidth),
+        child: _body(),
+      ),
     );
     if (wide) {
       return Scaffold(
@@ -59,7 +67,9 @@ class _HomeShellState extends State<HomeShell> {
           children: [
             NavigationRail(
               selectedIndex: _index,
-              labelType: NavigationRailLabelType.all,
+              extended: width >= 1280,
+              minExtendedWidth: 168,
+              labelType: width >= 1280 ? NavigationRailLabelType.none : NavigationRailLabelType.all,
               onDestinationSelected: _select,
               destinations: [
                 for (final t in _tabs)

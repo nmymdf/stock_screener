@@ -4,6 +4,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../layout.dart';
 import '../../data/history_store.dart';
 import '../../logic/engine/analysis.dart';
 import '../../logic/engine/industry_engine.dart';
@@ -24,10 +25,9 @@ class IndustryScreen extends StatelessWidget {
       builder: (context, a) {
         final list = a.industries;
         return [
-          const Text('產業強弱與輪動', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
+          const PageHeader(icon: Icons.category, title: '產業強弱與輪動', subtitle: '先判斷產業，再挑個股（規格書 §3）'),
           Text(
-            '同一家公司，在強勢產業和弱勢產業裡的成功機率不同——系統先判斷產業，再挑個股（規格書 §3）。'
+            '同一家公司，在強勢產業和弱勢產業裡的成功機率不同。'
             '產業分數由成員股的 20／60／120 日報酬中位數、站上 20／60 日線比例、創 60 日新高比例、成交值變化，'
             '跟其他產業比排名而來。',
             style: Theme.of(context).textTheme.bodySmall,
@@ -135,9 +135,9 @@ class IndustryDetailScreen extends StatelessWidget {
           ? const Center(child: Text('沒有這個產業的資料'))
           : Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 920),
+                constraints: const BoxConstraints(maxWidth: kMaxContentWidth),
                 child: ListView(
-                  padding: const EdgeInsets.all(14),
+                  padding: pagePadding(context),
                   children: [
                     Card(
                       child: Padding(

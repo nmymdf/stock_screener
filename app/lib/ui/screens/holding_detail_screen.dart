@@ -16,6 +16,7 @@ import '../../logic/holding_eval.dart';
 import '../../models/holding.dart';
 import '../format.dart';
 import '../holding_helpers.dart';
+import '../layout.dart';
 import '../theme.dart';
 import '../widgets/charts.dart';
 import '../widgets/horizon_widgets.dart';
@@ -59,60 +60,67 @@ class HoldingDetailScreen extends StatelessWidget {
       ),
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 920),
+          constraints: const BoxConstraints(maxWidth: kMaxContentWidth),
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(14, 8, 14, 24),
+            padding: pagePadding(context),
             children: [
-              _TodayCard(h: h, e: e, push: push),
-              if (h.closed && e.summary != null)
-                SectionCard(title: '結案摘要', child: Bullets(e.summary!.lines, BulletKind.info)),
-              if (e.scenario.isNotEmpty) _ScenarioCard(e: e),
-              if (e.thesisNow.isNotEmpty) _ThesisCard(h: h, e: e),
-              if (!h.closed && (e.addOnPlan.isNotEmpty || e.addOnRules.isNotEmpty)) _AddOnCard(e: e),
-              _MoneyCard(h: h, e: e),
-              SectionCard(
-                title: '持有方式：${h.style.label}（${h.style.period}）',
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(h.style.rules, style: const TextStyle(fontSize: 13, height: 1.5)),
-                    if (e.notes.isNotEmpty) ...[const SizedBox(height: 8), Bullets(e.notes, BulletKind.info)],
-                    if (h.note != null) ...[
-                      const SizedBox(height: 4),
-                      Text('備註：${h.note}', style: Theme.of(context).textTheme.bodySmall),
-                    ],
-                  ],
-                ),
-              ),
-              _Chart(h: h, e: e),
-              if (e.log.isNotEmpty) _LogCard(h: h, e: e),
-              SectionCard(
-                title: '買賣紀錄',
-                child: Column(
-                  children: [
-                    for (final (i, b) in h.buys.indexed)
-                      _RecordRow(
-                        label: i == 0 ? '買進' : '加碼',
-                        date: b.date,
-                        price: b.price,
-                        shares: b.shares,
-                        color: AppColors.up,
-                        onDelete: h.buys.length <= 1
-                            ? null
-                            : () => context.read<HoldingsStore>().upsert(h.copyWith(buys: [...h.buys]..removeAt(i))),
-                      ),
-                    for (final (i, s) in h.sells.indexed)
-                      _RecordRow(
-                        label: '賣出${s.reason == null ? '' : '（${s.reason}）'}',
-                        date: s.date,
-                        price: s.price,
-                        shares: s.shares,
-                        color: AppColors.down,
-                        onDelete: () =>
-                            context.read<HoldingsStore>().upsert(h.copyWith(sells: [...h.sells]..removeAt(i))),
-                      ),
-                  ],
-                ),
+              SplitView(
+                left: [
+                  _TodayCard(h: h, e: e, push: push),
+                  if (h.closed && e.summary != null)
+                    SectionCard(title: '結案摘要', child: Bullets(e.summary!.lines, BulletKind.info)),
+                  if (e.scenario.isNotEmpty) _ScenarioCard(e: e),
+                  if (e.thesisNow.isNotEmpty) _ThesisCard(h: h, e: e),
+                  if (!h.closed && (e.addOnPlan.isNotEmpty || e.addOnRules.isNotEmpty)) _AddOnCard(e: e),
+                  _MoneyCard(h: h, e: e),
+                  SectionCard(
+                    title: '持有方式：${h.style.label}（${h.style.period}）',
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(h.style.rules, style: const TextStyle(fontSize: 13, height: 1.5)),
+                        if (e.notes.isNotEmpty) ...[const SizedBox(height: 8), Bullets(e.notes, BulletKind.info)],
+                        if (h.note != null) ...[
+                          const SizedBox(height: 4),
+                          Text('備註：${h.note}', style: Theme.of(context).textTheme.bodySmall),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+                right: [
+                  _Chart(h: h, e: e),
+                  if (e.log.isNotEmpty) _LogCard(h: h, e: e),
+                  SectionCard(
+                    title: '買賣紀錄',
+                    child: Column(
+                      children: [
+                        for (final (i, b) in h.buys.indexed)
+                          _RecordRow(
+                            label: i == 0 ? '買進' : '加碼',
+                            date: b.date,
+                            price: b.price,
+                            shares: b.shares,
+                            color: AppColors.up,
+                            onDelete: h.buys.length <= 1
+                                ? null
+                                : () =>
+                                      context.read<HoldingsStore>().upsert(h.copyWith(buys: [...h.buys]..removeAt(i))),
+                          ),
+                        for (final (i, s) in h.sells.indexed)
+                          _RecordRow(
+                            label: '賣出${s.reason == null ? '' : '（${s.reason}）'}',
+                            date: s.date,
+                            price: s.price,
+                            shares: s.shares,
+                            color: AppColors.down,
+                            onDelete: () =>
+                                context.read<HoldingsStore>().upsert(h.copyWith(sells: [...h.sells]..removeAt(i))),
+                          ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

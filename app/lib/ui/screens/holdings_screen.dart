@@ -5,6 +5,7 @@ library;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../layout.dart';
 import '../../data/history_store.dart';
 import '../../data/holdings_store.dart';
 import '../../data/stock_catalog.dart';
@@ -48,18 +49,16 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
     }
 
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 14, 14, 80),
+      padding: pagePadding(context),
       children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text('我的持股', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-            ),
-            if (store.latestDate != null)
-              Text('依 ${store.latestDate} 收盤判斷', style: Theme.of(context).textTheme.bodySmall),
-          ],
+        PageHeader(
+          icon: Icons.account_balance_wallet,
+          title: '我的持股',
+          subtitle: '每天收盤後告訴你每一檔要續抱、注意、加碼、先賣一半、出場還是停損，並寫出原因',
+          trailing: store.latestDate == null
+              ? null
+              : Text('依 ${store.latestDate} 收盤判斷', style: Theme.of(context).textTheme.bodySmall),
         ),
-        const SizedBox(height: 8),
         if (store.syncing || store.missingDates().isNotEmpty) const SyncStatusCard(),
         if (open.isNotEmpty) _TodaySummary(open: open, value: value, unreal: unreal, realized: stats.realized),
         const SizedBox(height: 6),
@@ -83,7 +82,9 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
               '賣出時記錄下來，累積成你自己的交易紀錄、績效和紀律分數。',
             ], BulletKind.info),
           ),
-        for (final (h, e) in open) _HoldingCard(h: h, e: e),
+        CardGrid(
+          children: [for (final (h, e) in open) _HoldingCard(h: h, e: e)],
+        ),
         if (closed.isNotEmpty) ...[
           const SizedBox(height: 12),
           SectionCard(

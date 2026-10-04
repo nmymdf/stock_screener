@@ -47,14 +47,15 @@ class StatGrid extends StatelessWidget {
       children: [
         for (final s in stats)
           SizedBox(
-            width: 110,
+            width: 118,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(s.$1, style: Theme.of(context).textTheme.bodySmall),
+                const SizedBox(height: 2),
                 Text(
                   s.$2,
-                  style: TextStyle(fontWeight: FontWeight.w600, color: s.$3),
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: s.$3),
                 ),
               ],
             ),

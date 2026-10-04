@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart' show ThemeMode;
 
 import '../logic/adjust.dart';
 import '../logic/engine/analysis.dart';
@@ -91,6 +92,11 @@ class HistoryStore extends ChangeNotifier {
   int lookbackDays = 400;
   ScreenCriteria criteria = kScreenPresets.first.criteria;
 
+  /// 顯示設定：字體大小（null = 依視窗寬度自動）、淺色／深色、比較清單。
+  double? fontScale;
+  ThemeMode themeMode = ThemeMode.system;
+  List<String> compareCodes = const [];
+
   AnalysisResult? analysis;
   bool analyzing = false;
   String? analysisError;
@@ -125,6 +131,9 @@ class HistoryStore extends ChangeNotifier {
         lookbackDays = (s['lookbackDays'] as num?)?.round() ?? lookbackDays;
         final c = s['criteria'];
         if (c is Map<String, dynamic>) criteria = ScreenCriteria.fromJson(c);
+        fontScale = (s['fontScale'] as num?)?.toDouble();
+        themeMode = ThemeMode.values.firstWhere((m) => m.name == s['themeMode'], orElse: () => ThemeMode.system);
+        compareCodes = [for (final x in (s['compareCodes'] as List? ?? const [])) x as String];
       }
       for (final j in await _store.readAllDays()) {
         final snap = DaySnapshot.fromJson(j);
@@ -143,7 +152,40 @@ class HistoryStore extends ChangeNotifier {
     }
   }
 
-  Future<void> _saveSettings() => _store.writeSettings({'lookbackDays': lookbackDays, 'criteria': criteria.toJson()});
+  Future<void> _saveSettings() => _store.writeSettings({
+    'lookbackDays': lookbackDays,
+    'criteria': criteria.toJson(),
+    'fontScale': ?fontScale,
+    'themeMode': themeMode.name,
+    'compareCodes': compareCodes,
+  });
+
+  Future<void> setFontScale(double? v) async {
+    fontScale = v;
+    notifyListeners();
+    await _saveSettings();
+  }
+
+  Future<void> setThemeMode(ThemeMode m) async {
+    themeMode = m;
+    notifyListeners();
+    await _saveSettings();
+  }
+
+  Future<void> setCompareCodes(List<String> codes) async {
+    compareCodes = List.unmodifiable(codes);
+    notifyListeners();
+    await _saveSettings();
+  }
+
+  /// 抓滿 [days] 天的歷史資料（例如回測要兩年）：調整回看天數後開始同步。
+  Future<void> extendHistory(int days) async {
+    if (lookbackDays < days) {
+      lookbackDays = days;
+      await _saveSettings();
+    }
+    await sync();
+  }
 
   void _dataChanged() {
     _dataVersion++;

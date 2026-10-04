@@ -30,12 +30,16 @@ class BacktestConfig {
   final int entryDelay; // 0 = 隔天開盤進場；1 = 再晚一天（壓力測試用）
   final int timeStopDays;
 
+  /// 只統計這天（含）之後出現的訊號；null = 本機全部資料（扣掉前 60 天暖機）。
+  final String? startDate;
+
   const BacktestConfig({
     this.strategies = const {Strategy.breakout, Strategy.pullback, Strategy.continuation, Strategy.meanReversion},
     this.slippagePct = 0.1,
     this.feeMultiplier = 1,
     this.entryDelay = 0,
     this.timeStopDays = 10,
+    this.startDate,
   });
 
   /// §15.2 Stress Test：滑價 ×2、交易成本提高、進出場延遲一根 Bar。
@@ -45,6 +49,7 @@ class BacktestConfig {
     feeMultiplier: feeMultiplier * 1.5,
     entryDelay: entryDelay + 1,
     timeStopDays: timeStopDays,
+    startDate: startDate,
   );
 }
 
@@ -277,10 +282,10 @@ Float32List rsRawSeries(StockSeries s, List<int> idx, int nd) {
 }
 
 /// 依市場狀態與 RS 排名挑出真正會成交的交易；同一檔股票持有中不重複進場。
-void selectTrades(List<BtCandidate> cands, Float32List rsPct, List<Regime?> regimes, BtSim out) {
+void selectTrades(List<BtCandidate> cands, Float32List rsPct, List<Regime?> regimes, BtSim out, {int minDay = 0}) {
   var nextFree = 0;
   for (final c in cands) {
-    if (c.i < nextFree) continue;
+    if (c.i < nextFree || c.day < minDay) continue;
     final regime = regimes[c.day];
     if (regime == null || regime == Regime.bear) continue;
     final pct = rsPct[c.day];
@@ -327,11 +332,16 @@ BacktestResult runBacktest(AnalysisInput input, BacktestConfig cfg) {
   );
   final regimes = [for (final m in market) m.score == null ? null : regimeOf(m.score!)];
   final rsPct = rsPercentiles(rsRawBy, nd);
+  var startDay = _warmup;
+  if (cfg.startDate != null) {
+    final k = dates.indexWhere((d) => d.compareTo(cfg.startDate!) >= 0);
+    startDay = math.max(_warmup, k < 0 ? nd : k);
+  }
 
   final base = BtSim(), stress = BtSim();
   for (final code in baseC.keys) {
-    selectTrades(baseC[code]!, rsPct[code]!, regimes, base);
-    selectTrades(stressC[code]!, rsPct[code]!, regimes, stress);
+    selectTrades(baseC[code]!, rsPct[code]!, regimes, base, minDay: startDay);
+    selectTrades(stressC[code]!, rsPct[code]!, regimes, stress, minDay: startDay);
   }
 
   final trades = base.trades..sort((a, b) => a.exitDate.compareTo(b.exitDate));
@@ -340,9 +350,7 @@ BacktestResult runBacktest(AnalysisInput input, BacktestConfig cfg) {
   };
 
   // 前段 70%／後段 30%（依日期切）
-  final first = dates.length > _warmup
-      ? dates[_warmup + ((nd - _warmup) * 0.7).floor().clamp(0, nd - _warmup - 1)]
-      : null;
+  final first = nd > startDay ? dates[startDay + ((nd - startDay) * 0.7).floor().clamp(0, nd - startDay - 1)] : null;
   final a = first == null ? <BtTrade>[] : trades.where((t) => t.entryDate.compareTo(first) < 0).toList();
   final b = first == null ? <BtTrade>[] : trades.where((t) => t.entryDate.compareTo(first) >= 0).toList();
 
@@ -386,7 +394,7 @@ BacktestResult runBacktest(AnalysisInput input, BacktestConfig cfg) {
     signals: base.signals,
     skippedChase: base.skippedChase,
     skippedGap: base.skippedGap,
-    fromDate: nd > _warmup ? dates[_warmup] : null,
+    fromDate: nd > startDay ? dates[startDay] : null,
     toDate: nd == 0 ? null : dates.last,
   );
 }

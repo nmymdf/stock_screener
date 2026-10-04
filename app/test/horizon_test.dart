@@ -7,6 +7,7 @@ import 'package:stock_screener/logic/engine/market_engine.dart';
 import 'package:stock_screener/logic/engine/signals.dart';
 import 'package:stock_screener/logic/ta.dart';
 import 'package:stock_screener/models/daily_bar.dart';
+import 'package:stock_screener/ui/screens/compare_screen.dart';
 
 import 'support/synthetic.dart';
 
@@ -140,5 +141,22 @@ void main() {
     const c = Calibration({'A|bull': few, 'A|*': many});
     expect(c.lookup(Strategy.breakout, Regime.bull)!.title, 'all');
     expect(many.reliable, true);
+  });
+
+  test('回測期間：只統計開始日之後的訊號', () {
+    final start = dates[200];
+    final bt = runBacktest(AnalysisInput(dates, series, const {}), BacktestConfig(startDate: start));
+    expect(bt.fromDate, start);
+    expect(bt.trades.every((t) => t.signalDate.compareTo(start) >= 0), true);
+    final all = runBacktest(AnalysisInput(dates, series, const {}), const BacktestConfig());
+    expect(bt.trades.length, lessThanOrEqualTo(all.trades.length));
+  });
+
+  test('比較頁的輸入：代號、名稱、混合分隔符號都認得，認不得的列出來', () {
+    final unknown = <String>[];
+    final codes = parseStockInput('2330, 2317、聯發科 xyz不存在', unknown: unknown);
+    expect(codes.take(2), ['2330', '2317']);
+    expect(codes.length, 3);
+    expect(unknown, ['xyz不存在']);
   });
 }

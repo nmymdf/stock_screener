@@ -3,6 +3,7 @@ library;
 
 import 'package:flutter/material.dart';
 
+import '../layout.dart';
 import '../../app_build_info.dart';
 import '../widgets/score_widgets.dart';
 import 'data_screen.dart';
@@ -19,7 +20,7 @@ class ToolsScreen extends StatelessWidget {
         builder: (_) => Scaffold(
           appBar: AppBar(title: Text(title)),
           body: Center(
-            child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 920), child: body),
+            child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 1280), child: body),
           ),
         ),
       ),
@@ -34,10 +35,9 @@ class ToolsScreen extends StatelessWidget {
       ),
     );
     return ListView(
-      padding: const EdgeInsets.all(14),
+      padding: pagePadding(context),
       children: [
-        const Text('工具', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
+        const PageHeader(icon: Icons.build, title: '工具', subtitle: '方法說明、自訂篩選、即時雷達、資料管理'),
         tile(
           Icons.menu_book_outlined,
           '系統方法說明',
@@ -70,7 +70,7 @@ class MethodScreen extends StatelessWidget {
       appBar: AppBar(title: const Text('系統方法說明')),
       body: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 820),
+          constraints: const BoxConstraints(maxWidth: 1100),
           child: ListView(
             padding: const EdgeInsets.all(14),
             children: [

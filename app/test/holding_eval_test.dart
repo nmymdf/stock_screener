@@ -307,7 +307,12 @@ void main() {
         hitStop: 10,
         avgR: 0.3,
         avgDays: 8,
-        cone: [ConePoint(1, 0.1, 0.3, 0.6), ConePoint(3, 0.3, 0.6, 1.0), ConePoint(5, 0.5, 0.9, 1.4)],
+        cone: [
+          ConePoint(1, 0.1, 0.3, 0.6),
+          ConePoint(3, 0.3, 0.6, 1.0),
+          ConePoint(5, 0.5, 0.9, 1.4),
+          ConePoint(20, 1, 1.5, 2.5),
+        ],
       );
       final r = evaluateHolding(h, adjusted: barsOf(dates, closes), raw: barsOf(dates, closes), calibration: cal);
       expect(r.coneNote, contains('落後'));

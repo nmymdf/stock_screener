@@ -702,7 +702,7 @@ HoldingEval evaluateHolding(
       }
       final k = j - e + 1;
       final cp = calibration?.at(k);
-      if (cp != null && k >= 3 && rDay < cp.p25) {
+      if (cp != null && k >= 3 && k <= calibration!.cone.last.day && rDay < cp.p25) {
         watch.add('買進第 $k 天 ${_r(rDay)}，落後同類訊號 75% 的走勢（典型 ${_r(cp.p25)} ～ ${_r(cp.p75)}）');
       }
       final canAdd =
@@ -934,7 +934,8 @@ HoldingEval evaluateHolding(
     if (cp != null && k >= 1) {
       final pos = rNow < cp.p25 ? '落後' : (rNow > cp.p75 ? '領先' : '在典型範圍內');
       coneNote =
-          '同類訊號買進第 $k 天的典型走勢：中位數 ${_r(cp.p50)}，一半落在 ${_r(cp.p25)} ～ ${_r(cp.p75)}。'
+          '${k <= calibration!.cone.last.day ? '同類訊號買進第 $k 天' : '同類訊號買進第 ${cp.day} 天（統計只到這天，這筆已持有 $k 天）'}的典型走勢：'
+          '中位數 ${_r(cp.p50)}，一半落在 ${_r(cp.p25)} ～ ${_r(cp.p75)}。'
           '這筆目前 ${_r(rNow)}，$pos。';
     }
   }

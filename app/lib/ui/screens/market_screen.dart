@@ -6,6 +6,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../layout.dart';
 import '../../logic/engine/market_engine.dart';
 import '../format.dart';
 import '../widgets/analysis_gate.dart';
@@ -29,15 +30,12 @@ class MarketScreen extends StatelessWidget {
         String pct(double? v) => v == null ? '—' : '${(v * 100).toStringAsFixed(0)}%';
         final b = t.breadth;
         return [
-          Row(
-            children: [
-              const Expanded(
-                child: Text('市場環境', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
-              ),
-              Text('${a.latestDate}', style: Theme.of(context).textTheme.bodySmall),
-            ],
+          PageHeader(
+            icon: Icons.speed,
+            title: '市場環境',
+            subtitle: '用全市場每一檔股票的廣度算 Market Score，決定現在適不適合積極做多、最多放多少部位（規格書 §2）',
+            trailing: Text('${a.latestDate}', style: Theme.of(context).textTheme.bodySmall),
           ),
-          const SizedBox(height: 8),
           Card(
             color: regimeColor(r).withValues(alpha: .08),
             child: Padding(

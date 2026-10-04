@@ -155,7 +155,7 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(store.backtest, isNotNull);
-    expect(find.textContaining('結果：'), findsOneWidget);
+    expect(find.text('白話結論'), findsOneWidget);
 
     await tester.runAsync(() => tmp.delete(recursive: true));
   });
@@ -382,4 +382,46 @@ void main() {
 
     await tester.runAsync(() => tmp.delete(recursive: true));
   });
+
+  for (final width in [1500.0, 390.0]) {
+    testWidgets('比較頁（寬 ${width.round()}）：單檔現況總覽、多檔綜合結論、相對走勢、逐項比較都畫得出來', (tester) async {
+      tester.view.physicalSize = Size(width, 4000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final (tmp, store, _) = await seededMarket(tester);
+      final codes = store.analysis!.stocks.where((s) => s.code != '2330').take(2).map((s) => s.code).toList();
+      await tester.runAsync(() => store.setCompareCodes(['2330']));
+      await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp)));
+      await tester.pump();
+      await tester.tap(find.text('比較').last);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('現況總覽'), findsOneWidget);
+      expect(find.text('關鍵價位'), findsOneWidget);
+
+      await tester.runAsync(() => store.setCompareCodes(['2330', ...codes]));
+      await tester.pumpAndSettle();
+      expect(find.text('綜合結論'), findsOneWidget);
+      expect(find.text('逐項比較'), findsOneWidget);
+      expect(find.text('相對走勢（起點 = 100）'), findsOneWidget);
+      await tester.tap(find.text('1 年'));
+      await tester.pumpAndSettle();
+
+      // 用輸入框一次加入多檔
+      await tester.runAsync(() => store.setCompareCodes(const []));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField).first, '2330 ${codes.first}');
+      await tester.tap(find.text('加入'));
+      await tester.pumpAndSettle();
+      expect(store.compareCodes, ['2330', codes.first]);
+
+      if (width >= 1100) {
+        expect(find.text('市場分數 '), findsOneWidget);
+        // 抬頭的字體放大：A＋ 之後倍率變大並記住
+        await tester.tap(find.text('A＋'));
+        await tester.pump();
+        expect(store.fontScale, greaterThan(1.15));
+      }
+      await tester.runAsync(() => tmp.delete(recursive: true));
+    });
+  }
 }
