@@ -557,8 +557,9 @@ Future<IntlData> fetchIntl(Fetcher f, {bool verbose = false}) async {
       );
       if (b != null) {
         final (d, v) = parseFredCsv(utf8.decode(b));
-        if (d.length > 500)
+        if (d.length > 500) {
           s = IntlSeries(e.key, 'FRED $fred', fredLag, d, [for (final x in v) packNum(x, 4).toDouble()]);
+        }
       }
     }
     if (s != null) {
