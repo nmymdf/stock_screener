@@ -40,17 +40,15 @@ class StockScreenerApp extends StatelessWidget {
             builder: (context, child) {
               final mq = MediaQuery.of(context);
               final scale = fontScale ?? autoFontScale(mq.size.width);
+              // 放大後的設定要一路傳到下面的每一頁（不能再從外層的 context 重讀，否則會被蓋回原本的大小）
+              final scaled = mq.copyWith(textScaler: TextScaler.linear(scale));
               return MediaQuery(
-                data: mq.copyWith(textScaler: TextScaler.linear(scale)),
+                data: scaled,
                 child: Column(
                   children: [
                     const AppBanner(),
                     Expanded(
-                      child: MediaQuery.removePadding(
-                        context: context,
-                        removeTop: true,
-                        child: child ?? const SizedBox(),
-                      ),
+                      child: MediaQuery(data: scaled.removePadding(removeTop: true), child: child ?? const SizedBox()),
                     ),
                   ],
                 ),

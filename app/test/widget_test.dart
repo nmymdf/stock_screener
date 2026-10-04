@@ -417,9 +417,15 @@ void main() {
       if (width >= 1100) {
         expect(find.text('市場分數 '), findsOneWidget);
         // 抬頭的字體放大：A＋ 之後倍率變大並記住
+        // 字體大小要影響整個 App，不只抬頭：頁面標題的字也要跟著變大
+        double scaleOf(Finder f) => MediaQuery.textScalerOf(tester.element(f)).scale(10) / 10;
+        final title = find.text('個股查詢與比較');
+        final before = scaleOf(title);
         await tester.tap(find.text('A＋'));
-        await tester.pump();
+        await tester.pumpAndSettle();
         expect(store.fontScale, greaterThan(1.15));
+        expect(scaleOf(title), greaterThan(before));
+        expect(scaleOf(title), closeTo(store.fontScale!, 1e-9));
       }
       await tester.runAsync(() => tmp.delete(recursive: true));
     });

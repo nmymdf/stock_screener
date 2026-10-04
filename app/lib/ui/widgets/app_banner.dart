@@ -1,5 +1,5 @@
-/// 每個畫面最上面的抬頭（像看盤軟體的頂端列）：標誌、版本、加權指數、
-/// 市場分數、資料日期與自動更新狀態、字體大小、深淺色切換、作者。
+/// 每個畫面最上面的抬頭（像看盤軟體的頂端列）：標誌、版本、作者、加權指數、
+/// 市場分數、資料日期與自動更新狀態、字體大小（整個 App）、深淺色切換。
 ///
 /// 這一列放在 Navigator 之上（MaterialApp.builder），所以不能用 Tooltip、
 /// 選單這類需要 Overlay 的元件。
@@ -66,15 +66,16 @@ class AppBanner extends StatelessWidget {
                     style: TextStyle(fontSize: 11, color: gold, fontWeight: FontWeight.w700),
                   ),
                 ),
+                const SizedBox(width: 10),
+                if (w >= 760) author else Flexible(child: author),
                 if (w >= kWideBreakpoint) ...[const SizedBox(width: 18), Expanded(child: _Ticker(store: store))],
-                if (w < kWideBreakpoint) const Spacer(),
+                if (w >= 760 && w < kWideBreakpoint) const Spacer(),
                 if (w >= 760) ...[
+                  const SizedBox(width: 10),
                   _FontControl(store: store, width: w),
                   const SizedBox(width: 6),
                   _ThemeToggle(store: store),
                 ],
-                const SizedBox(width: 10),
-                if (w >= 760) author else Flexible(child: author),
               ],
             ),
           ),
