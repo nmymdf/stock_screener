@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'data/history_store.dart';
 import 'data/holdings_store.dart';
+import 'data/stock_acc_source.dart';
 import 'ui/home.dart';
 import 'ui/layout.dart';
 import 'ui/theme.dart';
@@ -10,7 +11,12 @@ import 'ui/widgets/app_banner.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(StockScreenerApp(store: HistoryStore(autoSync: true)..load(), holdings: HoldingsStore()..load()));
+  runApp(
+    StockScreenerApp(
+      store: HistoryStore(autoSync: true)..load(),
+      holdings: HoldingsStore(accSource: StockAccSource())..load(),
+    ),
+  );
 }
 
 class StockScreenerApp extends StatelessWidget {

@@ -51,11 +51,14 @@ class HoldingDetailScreen extends StatelessWidget {
             icon: const Icon(Icons.edit),
             onPressed: () => push(EditHoldingPage(holding: h)),
           ),
-          IconButton(
-            tooltip: '刪除這筆持股',
-            icon: const Icon(Icons.delete_outline),
-            onPressed: () => _confirmDelete(context, h),
-          ),
+          if (!h.fromStockAcc)
+            IconButton(
+              tooltip: '刪除這筆持股',
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () async {
+                if (await confirmDeleteHolding(context, h) && context.mounted) Navigator.of(context).pop();
+              },
+            ),
         ],
       ),
       body: Center(
@@ -92,8 +95,9 @@ class HoldingDetailScreen extends StatelessWidget {
                   _Chart(h: h, e: e),
                   if (e.log.isNotEmpty) _LogCard(h: h, e: e),
                   SectionCard(
-                    title: '買賣紀錄',
+                    title: h.fromStockAcc ? '買賣紀錄（來自 stock_acc）' : '買賣紀錄',
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         for (final (i, b) in h.buys.indexed)
                           _RecordRow(
@@ -102,21 +106,26 @@ class HoldingDetailScreen extends StatelessWidget {
                             price: b.price,
                             shares: b.shares,
                             color: AppColors.up,
-                            onDelete: h.buys.length <= 1
-                                ? null
-                                : () =>
-                                      context.read<HoldingsStore>().upsert(h.copyWith(buys: [...h.buys]..removeAt(i))),
+                            cost: b.fee == null ? null : '手續費 ${f0(b.fee!)}',
+                            onTap: h.fromStockAcc ? null : () => editLotDialog(context, h, buy: true, index: i),
                           ),
                         for (final (i, s) in h.sells.indexed)
                           _RecordRow(
-                            label: '賣出${s.reason == null ? '' : '（${s.reason}）'}',
+                            label: '賣出${s.reason == null || h.fromStockAcc ? '' : '（${s.reason}）'}',
                             date: s.date,
                             price: s.price,
                             shares: s.shares,
                             color: AppColors.down,
-                            onDelete: () =>
-                                context.read<HoldingsStore>().upsert(h.copyWith(sells: [...h.sells]..removeAt(i))),
+                            cost: s.fee == null && s.tax == null ? null : '手續費 ${f0(s.fee ?? 0)}・稅 ${f0(s.tax ?? 0)}',
+                            onTap: h.fromStockAcc ? null : () => editLotDialog(context, h, buy: false, index: i),
                           ),
+                        const SizedBox(height: 4),
+                        Text(
+                          h.fromStockAcc
+                              ? '這些紀錄來自 stock_acc，要修改請到 stock_acc，回來在持股頁按「同步 stock_acc」。'
+                              : '點任何一筆紀錄可以修改日期、價格、股數，或刪除。',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
                       ],
                     ),
                   ),
@@ -127,24 +136,6 @@ class HoldingDetailScreen extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  Future<void> _confirmDelete(BuildContext context, Holding h) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('刪除這筆持股？'),
-        content: const Text('會刪掉這檔的所有買賣紀錄。如果只是賣掉了，請用「記錄賣出」，交易紀錄才會留下來。'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
-          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('刪除')),
-        ],
-      ),
-    );
-    if (ok == true && context.mounted) {
-      await context.read<HoldingsStore>().remove(h.id);
-      if (context.mounted) Navigator.of(context).pop();
-    }
   }
 }
 
@@ -199,17 +190,31 @@ class _TodayCard extends StatelessWidget {
               spacing: 8,
               runSpacing: 6,
               children: [
-                if (!h.closed)
+                if (!h.closed && !h.fromStockAcc)
                   FilledButton.icon(
                     onPressed: () => push(SellPage(holding: h, eval: e)),
                     icon: const Icon(Icons.sell_outlined, size: 18),
                     label: const Text('記錄賣出'),
                   ),
-                if (!h.closed)
+                if (!h.closed && !h.fromStockAcc)
                   OutlinedButton.icon(
                     onPressed: () => push(AddHoldingPage(code: h.code)),
                     icon: const Icon(Icons.add, size: 18),
                     label: const Text('加碼（記錄買進）'),
+                  ),
+                OutlinedButton.icon(
+                  onPressed: () => push(EditHoldingPage(holding: h)),
+                  icon: const Icon(Icons.tune, size: 18),
+                  label: const Text('修改設定'),
+                ),
+                if (!h.fromStockAcc)
+                  OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(foregroundColor: Theme.of(context).colorScheme.error),
+                    onPressed: () async {
+                      if (await confirmDeleteHolding(context, h) && context.mounted) Navigator.of(context).pop();
+                    },
+                    icon: const Icon(Icons.delete_outline, size: 18),
+                    label: const Text('刪除'),
                   ),
                 TextButton(
                   onPressed: () => push(StockReportScreen(code: h.code)),
@@ -217,6 +222,14 @@ class _TodayCard extends StatelessWidget {
                 ),
               ],
             ),
+            if (h.fromStockAcc)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  '這筆來自 stock_acc 記帳：買賣請在 stock_acc 記，持有方式、停損、備註可以在這裡改。',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
           ],
         ),
       ),
@@ -571,32 +584,37 @@ class _RecordRow extends StatelessWidget {
   final double price;
   final int shares;
   final Color color;
-  final VoidCallback? onDelete;
+  final String? cost;
+  final VoidCallback? onTap;
   const _RecordRow({
     required this.label,
     required this.date,
     required this.price,
     required this.shares,
     required this.color,
-    this.onDelete,
+    this.cost,
+    this.onTap,
   });
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 2),
-    child: Row(
-      children: [
-        Tag(label, color),
-        const SizedBox(width: 8),
-        Expanded(child: Text('$date · ${f2(price)} × $shares 股', style: const TextStyle(fontSize: 13))),
-        if (onDelete != null)
-          IconButton(
-            tooltip: '刪除這筆紀錄（輸入錯誤時用）',
-            icon: const Icon(Icons.close, size: 16),
-            visualDensity: VisualDensity.compact,
-            onPressed: onDelete,
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    borderRadius: BorderRadius.circular(6),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+      child: Row(
+        children: [
+          Tag(label, color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$date · ${f2(price)} × $shares 股${cost == null ? '' : '（$cost）'}',
+              style: const TextStyle(fontSize: 13),
+            ),
           ),
-      ],
+          if (onTap != null) Icon(Icons.edit_outlined, size: 16, color: Theme.of(context).colorScheme.outline),
+        ],
+      ),
     ),
   );
 }

@@ -73,7 +73,7 @@ class _AddHoldingPageState extends State<AddHoldingPage> {
     super.initState();
     final store = context.read<HistoryStore>();
     _code = widget.code;
-    _existing = _code == null ? null : context.read<HoldingsStore>().openFor(_code!);
+    _existing = _code == null ? null : context.read<HoldingsStore>().openFor(_code!, source: HoldingSource.manual);
     _date = ymd(taipeiNow());
     _style = defaultStyleFor(widget.plan?.strategy, duration: widget.plan?.duration);
     final p = widget.plan;
@@ -180,7 +180,7 @@ class _AddHoldingPageState extends State<AddHoldingPage> {
                   onPicked: (c) {
                     setState(() {
                       _code = c;
-                      _existing = context.read<HoldingsStore>().openFor(c);
+                      _existing = context.read<HoldingsStore>().openFor(c, source: HoldingSource.manual);
                     });
                     final last = _lastClose(c);
                     if (last != null) _price.text = last.toStringAsFixed(2);
@@ -620,4 +620,196 @@ class _EditHoldingPageState extends State<EditHoldingPage> {
       ),
     );
   }
+}
+
+/// 刪除整筆持股（只限手動／模擬）：先確認，刪掉回傳 true。
+Future<bool> confirmDeleteHolding(BuildContext context, Holding h) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('刪除 ${h.code} ${kBuiltinStocksByCode[h.code]?.name ?? ''}？'),
+      content: const Text('會刪掉這檔的所有買賣紀錄和每日追蹤，刪除後無法復原。\n如果只是賣掉了，請用「記錄賣出」，交易紀錄才會留下來。'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: Theme.of(ctx).colorScheme.error),
+          onPressed: () => Navigator.pop(ctx, true),
+          child: const Text('刪除'),
+        ),
+      ],
+    ),
+  );
+  if (ok == true && context.mounted) {
+    await context.read<HoldingsStore>().remove(h.id);
+    return true;
+  }
+  return false;
+}
+
+/// 持股卡片右上角的「⋮」選單。
+class HoldingMenu extends StatelessWidget {
+  final Holding h;
+  final HoldingEval e;
+  const HoldingMenu({super.key, required this.h, required this.e});
+
+  @override
+  Widget build(BuildContext context) {
+    void push(Widget page) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+    return PopupMenuButton<String>(
+      tooltip: '更多動作',
+      icon: const Icon(Icons.more_vert, size: 20),
+      onSelected: (v) {
+        switch (v) {
+          case 'edit':
+            push(EditHoldingPage(holding: h));
+          case 'sell':
+            push(SellPage(holding: h, eval: e));
+          case 'buy':
+            push(AddHoldingPage(code: h.code));
+          case 'delete':
+            confirmDeleteHolding(context, h);
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(
+          value: 'edit',
+          child: ListTile(leading: Icon(Icons.tune), title: Text('修改設定（持有方式、停損、備註）')),
+        ),
+        if (!h.fromStockAcc && !h.closed) ...[
+          const PopupMenuItem(
+            value: 'sell',
+            child: ListTile(leading: Icon(Icons.sell_outlined), title: Text('記錄賣出')),
+          ),
+          const PopupMenuItem(
+            value: 'buy',
+            child: ListTile(leading: Icon(Icons.add), title: Text('加碼（記錄買進）')),
+          ),
+        ],
+        if (!h.fromStockAcc)
+          const PopupMenuItem(
+            value: 'delete',
+            child: ListTile(leading: Icon(Icons.delete_outline), title: Text('刪除這筆持股')),
+          ),
+      ],
+    );
+  }
+}
+
+/// 修改或刪除一筆買進／賣出紀錄（只限手動／模擬）。
+Future<void> editLotDialog(BuildContext context, Holding h, {required bool buy, required int index}) async {
+  final b = buy ? h.buys[index] : null;
+  final s = buy ? null : h.sells[index];
+  var date = b?.date ?? s!.date;
+  final price = TextEditingController(text: (b?.price ?? s!.price).toStringAsFixed(2));
+  final shares = TextEditingController(text: '${b?.shares ?? s!.shares}');
+  final reason = TextEditingController(text: s?.reason ?? '');
+  String? err;
+  final holdings = context.read<HoldingsStore>();
+
+  Future<void> save(BuildContext ctx, {bool delete = false}) async {
+    final buys = [...h.buys];
+    final sells = [...h.sells];
+    if (delete) {
+      buy ? buys.removeAt(index) : sells.removeAt(index);
+    } else {
+      final p = parseInput(price.text), n = parseInput(shares.text)?.round();
+      if (p == null || n == null) {
+        err = '請填正確的價格和股數';
+        return;
+      }
+      if (buy) {
+        buys[index] = BuyLot(date, p, n, fee: b!.fee);
+      } else {
+        sells[index] = SellLot(
+          date,
+          p,
+          n,
+          reason: reason.text.trim().isEmpty ? null : reason.text.trim(),
+          fee: s!.fee,
+          tax: s.tax,
+        );
+      }
+    }
+    final problem = validateLots(buys, sells);
+    if (problem != null) {
+      err = problem;
+      return;
+    }
+    await holdings.upsert(h.copyWith(buys: buys, sells: sells));
+    if (ctx.mounted) Navigator.pop(ctx);
+  }
+
+  await showDialog<void>(
+    context: context,
+    builder: (ctx) => StatefulBuilder(
+      builder: (ctx, setState) => AlertDialog(
+        title: Text(buy ? '修改買進紀錄' : '修改賣出紀錄'),
+        content: SizedBox(
+          width: 380,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final now = taipeiNow();
+                  final d = await showDatePicker(
+                    context: ctx,
+                    initialDate: DateTime.parse(date),
+                    firstDate: DateTime(now.year - 10),
+                    lastDate: DateTime(now.year, now.month, now.day),
+                  );
+                  if (d != null) setState(() => date = ymd(d));
+                },
+                icon: const Icon(Icons.event, size: 18),
+                label: Text('日期：$date'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: price,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(labelText: '價格'),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: shares,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: '股數（1 張 = 1000 股）'),
+              ),
+              if (!buy) ...[
+                const SizedBox(height: 10),
+                TextField(
+                  controller: reason,
+                  decoration: const InputDecoration(labelText: '賣出原因（選填）'),
+                ),
+              ],
+              if (err != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(err!, style: TextStyle(color: Theme.of(ctx).colorScheme.error, fontSize: 13)),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              await save(ctx, delete: true);
+              if (ctx.mounted) setState(() {});
+            },
+            icon: Icon(Icons.delete_outline, color: Theme.of(ctx).colorScheme.error),
+            label: Text('刪除這筆', style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
+          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(
+            onPressed: () async {
+              await save(ctx);
+              if (ctx.mounted) setState(() {});
+            },
+            child: const Text('儲存'),
+          ),
+        ],
+      ),
+    ),
+  );
 }

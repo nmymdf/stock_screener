@@ -17,6 +17,7 @@ import '../../logic/engine/horizon.dart';
 import '../../logic/engine/industry_engine.dart';
 import '../../logic/engine/signals.dart';
 import '../../logic/ta.dart';
+import '../../models/holding.dart';
 import '../format.dart';
 import '../theme.dart';
 import '../layout.dart';
@@ -377,7 +378,9 @@ class _HoldingAction extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final holding = context.watch<HoldingsStore>().openFor(code);
+    final store = context.watch<HoldingsStore>();
+    final holding = store.openFor(code, source: HoldingSource.manual);
+    final acc = store.openFor(code, source: HoldingSource.stockAcc);
     final h = report.primary ?? (report.hits.isEmpty ? null : report.hits.first);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
@@ -416,6 +419,13 @@ class _HoldingAction extends StatelessWidget {
                   Navigator.of(context).push(MaterialPageRoute(builder: (_) => HoldingDetailScreen(id: holding.id))),
               icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
               label: Text('已持有 ${holding.shares} 股，看持股追蹤'),
+            ),
+          if (acc != null)
+            OutlinedButton.icon(
+              onPressed: () =>
+                  Navigator.of(context).push(MaterialPageRoute(builder: (_) => HoldingDetailScreen(id: acc.id))),
+              icon: const Icon(Icons.menu_book_outlined, size: 18),
+              label: Text('stock_acc 記帳持有 ${acc.shares} 股，看持股追蹤'),
             ),
         ],
       ),

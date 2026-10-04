@@ -41,15 +41,25 @@ extension HoldStyleInfo on HoldStyle {
   };
 }
 
+/// 持股從哪裡來：自己手動輸入（或模擬單），或從 stock_acc 的記帳同步進來。
+enum HoldingSource { manual, stockAcc }
+
 class BuyLot {
   final String date; // yyyy-MM-dd
   final double price;
   final int shares;
-  const BuyLot(this.date, this.price, this.shares);
 
-  Map<String, dynamic> toJson() => {'date': date, 'price': price, 'shares': shares};
-  static BuyLot fromJson(Map<String, dynamic> j) =>
-      BuyLot(j['date'] as String, (j['price'] as num).toDouble(), (j['shares'] as num).round());
+  /// 實際手續費（從 stock_acc 來的才有；沒有就用費率估算）。
+  final double? fee;
+  const BuyLot(this.date, this.price, this.shares, {this.fee});
+
+  Map<String, dynamic> toJson() => {'date': date, 'price': price, 'shares': shares, 'fee': ?fee};
+  static BuyLot fromJson(Map<String, dynamic> j) => BuyLot(
+    j['date'] as String,
+    (j['price'] as num).toDouble(),
+    (j['shares'] as num).round(),
+    fee: (j['fee'] as num?)?.toDouble(),
+  );
 }
 
 class SellLot {
@@ -57,14 +67,26 @@ class SellLot {
   final double price;
   final int shares;
   final String? reason;
-  const SellLot(this.date, this.price, this.shares, {this.reason});
 
-  Map<String, dynamic> toJson() => {'date': date, 'price': price, 'shares': shares, 'reason': ?reason};
+  /// 實際手續費＋證交稅（從 stock_acc 來的才有）。
+  final double? fee, tax;
+  const SellLot(this.date, this.price, this.shares, {this.reason, this.fee, this.tax});
+
+  Map<String, dynamic> toJson() => {
+    'date': date,
+    'price': price,
+    'shares': shares,
+    'reason': ?reason,
+    'fee': ?fee,
+    'tax': ?tax,
+  };
   static SellLot fromJson(Map<String, dynamic> j) => SellLot(
     j['date'] as String,
     (j['price'] as num).toDouble(),
     (j['shares'] as num).round(),
     reason: j['reason'] as String?,
+    fee: (j['fee'] as num?)?.toDouble(),
+    tax: (j['tax'] as num?)?.toDouble(),
   );
 }
 
@@ -94,6 +116,8 @@ class Holding {
   final String? confidence;
   final List<String> thesis;
 
+  final HoldingSource source;
+
   const Holding({
     required this.id,
     required this.code,
@@ -111,7 +135,10 @@ class Holding {
     this.duration,
     this.confidence,
     this.thesis = const [],
+    this.source = HoldingSource.manual,
   });
+
+  bool get fromStockAcc => source == HoldingSource.stockAcc;
 
   int get boughtShares => buys.fold(0, (a, b) => a + b.shares);
   int get soldShares => sells.fold(0, (a, b) => a + b.shares);
@@ -146,8 +173,8 @@ class Holding {
     style: style ?? this.style,
     buys: buys ?? this.buys,
     sells: sells ?? this.sells,
-    manualStop: identical(manualStop, _keep) ? this.manualStop : manualStop as double?,
-    manualTarget: identical(manualTarget, _keep) ? this.manualTarget : manualTarget as double?,
+    manualStop: identical(manualStop, _keep) ? this.manualStop : (manualStop as num?)?.toDouble(),
+    manualTarget: identical(manualTarget, _keep) ? this.manualTarget : (manualTarget as num?)?.toDouble(),
     strategy: strategy,
     planStop: planStop,
     planTarget: planTarget,
@@ -157,7 +184,50 @@ class Holding {
     duration: duration,
     confidence: confidence,
     thesis: thesis,
+    source: source,
   );
+
+  /// 只有台股選股自己的設定（持有方式、停損、目標、備註、買進判斷），
+  /// stock_acc 的持股重新同步時用來保留。
+  Map<String, dynamic> settingsJson() => {
+    'style': style.name,
+    'manualStop': ?manualStop,
+    'manualTarget': ?manualTarget,
+    'note': ?note,
+    'strategy': ?strategy,
+    'planStop': ?planStop,
+    'planTarget': ?planTarget,
+    'reason': ?reason,
+    'opportunity': ?opportunity,
+    'duration': ?duration,
+    'confidence': ?confidence,
+    if (thesis.isNotEmpty) 'thesis': thesis,
+  };
+
+  /// 套用之前存下來的設定（買賣紀錄不變）。
+  Holding withSettings(Map<String, dynamic>? j) {
+    if (j == null) return this;
+    double? d(String k) => (j[k] as num?)?.toDouble();
+    return Holding(
+      id: id,
+      code: code,
+      style: HoldStyle.values.firstWhere((s) => s.name == j['style'], orElse: () => style),
+      buys: buys,
+      sells: sells,
+      manualStop: d('manualStop'),
+      manualTarget: d('manualTarget'),
+      strategy: j['strategy'] as String?,
+      planStop: d('planStop'),
+      planTarget: d('planTarget'),
+      reason: j['reason'] as String?,
+      note: j['note'] as String?,
+      opportunity: j['opportunity'] as String?,
+      duration: (j['duration'] as num?)?.round(),
+      confidence: j['confidence'] as String?,
+      thesis: [for (final x in (j['thesis'] as List? ?? const [])) x as String],
+      source: source,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -176,6 +246,7 @@ class Holding {
     'duration': ?duration,
     'confidence': ?confidence,
     if (thesis.isNotEmpty) 'thesis': thesis,
+    if (source != HoldingSource.manual) 'source': source.name,
   };
 
   static Holding fromJson(Map<String, dynamic> j) {
@@ -197,6 +268,7 @@ class Holding {
       duration: (j['duration'] as num?)?.round(),
       confidence: j['confidence'] as String?,
       thesis: [for (final x in (j['thesis'] as List? ?? const [])) x as String],
+      source: HoldingSource.values.firstWhere((s) => s.name == j['source'], orElse: () => HoldingSource.manual),
     );
   }
 }

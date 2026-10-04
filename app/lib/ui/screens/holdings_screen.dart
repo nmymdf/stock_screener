@@ -32,21 +32,32 @@ class HoldingsScreen extends StatefulWidget {
 
 class _HoldingsScreenState extends State<HoldingsScreen> {
   bool _showClosed = false;
+  HoldingSource _source = HoldingSource.manual;
+
+  static String _groupName(HoldingSource s) => s == HoldingSource.manual ? '手動／模擬' : 'stock_acc 記帳';
 
   @override
   Widget build(BuildContext context) {
     final holdings = context.watch<HoldingsStore>();
     final store = context.watch<HistoryStore>();
-    final open = [for (final h in holdings.open) (h, evalFor(context, h))]
+    final showAcc = holdings.accAvailable;
+    final src = showAcc ? _source : HoldingSource.manual;
+    final group = holdings.of(src);
+    final open = [for (final h in group.where((h) => !h.closed)) (h, evalFor(context, h))]
       ..sort((a, b) => a.$2.action.index.compareTo(b.$2.action.index));
-    final closed = holdings.closed;
-    final stats = tradeStats(holdings.all);
+    final closed = group.where((h) => h.closed).toList()
+      ..sort((a, b) => (b.lastSellDate ?? '').compareTo(a.lastSellDate ?? ''));
+    final stats = tradeStats(group);
     final discipline = disciplineStats([for (final (_, e) in open) e, for (final h in closed) evalFor(context, h)]);
     var value = 0.0, unreal = 0.0;
     for (final (_, e) in open) {
       value += e.marketValue ?? 0;
       unreal += e.unrealized ?? 0;
     }
+    final other = src == HoldingSource.manual ? HoldingSource.stockAcc : HoldingSource.manual;
+    final otherUrgent = showAcc
+        ? holdings.of(other).where((h) => !h.closed && evalFor(context, h).action.needsAction).length
+        : 0;
 
     return ListView(
       padding: pagePadding(context),
@@ -60,28 +71,58 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
               : Text('依 ${store.latestDate} 收盤判斷', style: Theme.of(context).textTheme.bodySmall),
         ),
         if (store.syncing || store.missingDates().isNotEmpty) const SyncStatusCard(),
+        if (showAcc) ...[
+          SegmentedButton<HoldingSource>(
+            showSelectedIcon: false,
+            segments: [
+              for (final s in HoldingSource.values)
+                ButtonSegment(
+                  value: s,
+                  icon: Icon(s == HoldingSource.manual ? Icons.edit_note : Icons.menu_book_outlined, size: 18),
+                  label: Text('${_groupName(s)} ${holdings.of(s).where((h) => !h.closed).length}'),
+                ),
+            ],
+            selected: {src},
+            onSelectionChanged: (v) => setState(() => _source = v.first),
+          ),
+          const SizedBox(height: 8),
+          if (src == HoldingSource.stockAcc) _AccBar(holdings: holdings),
+          if (otherUrgent > 0)
+            TextButton.icon(
+              onPressed: () => setState(() => _source = other),
+              icon: Icon(Icons.priority_high, color: actionColor(DailyAction.stopLoss), size: 18),
+              label: Text(
+                '「${_groupName(other)}」有 $otherUrgent 檔需要處理，點這裡切過去',
+                style: TextStyle(color: actionColor(DailyAction.stopLoss)),
+              ),
+            ),
+        ],
         if (open.isNotEmpty) _TodaySummary(open: open, value: value, unreal: unreal, realized: stats.realized),
         const SizedBox(height: 6),
-        FilledButton.icon(
-          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddHoldingPage())),
-          icon: const Icon(Icons.add),
-          label: const Text('新增持股'),
-        ),
+        if (src == HoldingSource.manual)
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const AddHoldingPage())),
+            icon: const Icon(Icons.add),
+            label: Text(showAcc ? '新增持股（手動／模擬）' : '新增持股'),
+          ),
         const SizedBox(height: 8),
-        if (open.isEmpty)
-          const SectionCard(
+        if (open.isEmpty && src == HoldingSource.manual)
+          SectionCard(
             title: '持股追蹤怎麼用',
             child: Bullets([
               '按「新增持股」填股票、買進價、股數、日期，或在推薦的個股報告按「我已進場」，自動帶入停損和目標。',
+              if (showAcc) '「手動／模擬」可以放沒記在 stock_acc 的股票，或沒有真的買、只想照系統建議追蹤看看的模擬單。',
               '選持有方式：短線、波段、長期或自己設定，每種有不同的停損和出場規則。',
               '每天收盤資料更新後，每一檔會給一個持續建議：續抱、續抱但注意、可以加碼、先賣一半、出場、停損，並寫出原因。',
               '從買進那天起每個交易日都有一筆紀錄：收盤、損益、停損、當天發生的事、建議和原因。',
               '每天檢查「買進理由還成立嗎」（健康度），理由一項項失效時，跌破停損前就先提醒。',
               '明日劇本：收盤在哪個價位該做什麼，前一晚就知道。',
               '停損只會往上調、不會往下；只加贏家，虧損時加碼會警告「禁止向下攤平」。',
-              '賣出時記錄下來，累積成你自己的交易紀錄、績效和紀律分數。',
+              '買賣紀錄可以點開修改或刪除；賣出時記錄下來，累積成你自己的交易紀錄、績效和紀律分數。',
             ], BulletKind.info),
           ),
+        if (open.isEmpty && src == HoldingSource.stockAcc && holdings.accError == null)
+          const SectionCard(child: Text('stock_acc 目前沒有持有中的股票。在 stock_acc 記帳買進後，回來按「同步 stock_acc」就會出現在這裡。')),
         CardGrid(
           children: [for (final (h, e) in open) _HoldingCard(h: h, e: e)],
         ),
@@ -113,8 +154,64 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
           ),
         ],
         const SizedBox(height: 8),
-        const DisclaimerCard(text: '持股狀態是依規則在收盤後機械化判斷的提醒，不會自動下單，也不是投資建議。股利沒有算進已實現損益。'),
+        DisclaimerCard(
+          text:
+              '持股狀態是依規則在收盤後機械化判斷的提醒，不會自動下單，也不是投資建議。股利沒有算進已實現損益。'
+              '${showAcc ? '「stock_acc 記帳」只讀取這台電腦上 stock_acc 的檔案，不會修改它，也不會傳到任何地方。' : ''}',
+        ),
       ],
+    );
+  }
+}
+
+/// stock_acc 這一組最上面：同步按鈕、上次同步時間、讀了幾筆、錯誤訊息。
+class _AccBar extends StatelessWidget {
+  final HoldingsStore holdings;
+  const _AccBar({required this.holdings});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = holdings.accLastSync;
+    String two(int v) => v.toString().padLeft(2, '0');
+    return SectionCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 12,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              FilledButton.tonalIcon(
+                onPressed: holdings.accSyncing ? null : holdings.syncAcc,
+                icon: holdings.accSyncing
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.sync),
+                label: const Text('同步 stock_acc'),
+              ),
+              if (t != null)
+                Text(
+                  '上次同步 ${two(t.hour)}:${two(t.minute)}・讀到 ${holdings.accTradeCount} 筆交易',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+            ],
+          ),
+          if (holdings.accError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                holdings.accError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 12),
+              ),
+            ),
+          const SizedBox(height: 4),
+          Text(
+            '買賣請在 stock_acc 記帳，記完回來按「同步 stock_acc」。所有帳戶的同一檔股票合併成一筆；'
+            '持有方式、停損、備註可以在這裡改，重新同步不會洗掉。',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ],
+      ),
     );
   }
 }
@@ -155,7 +252,9 @@ class _HoldingCard extends StatelessWidget {
                       style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                     ),
                   ),
+                  if (h.fromStockAcc) ...[const Tag('stock_acc', Color(0xFF6A4C93)), const SizedBox(width: 4)],
                   Tag(h.style.label, Colors.blueGrey),
+                  HoldingMenu(h: h, e: e),
                 ],
               ),
               if (e.health != null || e.durationNow != null) ...[

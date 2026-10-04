@@ -69,6 +69,14 @@ extension DailyActionInfo on DailyAction {
 
 /// 證交所的交易成本：手續費 0.1425%（最低 20 元）、證交稅股票 0.3%、ETF 0.1%。
 double buyFee(double amount) => amount <= 0 ? 0 : math.max(20, amount * 0.001425);
+
+/// 這筆買進的手續費：有實際數字（stock_acc）用實際的，沒有就用費率估算。
+double lotBuyFee(BuyLot b) => b.fee ?? buyFee(b.price * b.shares);
+
+/// 這筆賣出的手續費＋證交稅。
+double lotSellCost(SellLot s, SecurityType t) =>
+    s.fee != null || s.tax != null ? (s.fee ?? 0) + (s.tax ?? 0) : sellCost(s.price * s.shares, t);
+
 double sellCost(double amount, SecurityType t) => amount <= 0
     ? 0
     : math.max(20, amount * 0.001425) +
@@ -265,12 +273,12 @@ class HoldingEval {
 double realizedPnl(Holding h, SecurityType type) {
   final cost = h.avgCost;
   final bought = h.boughtShares;
-  final totalBuyFee = h.buys.fold(0.0, (a, b) => a + buyFee(b.price * b.shares));
+  final totalBuyFee = h.buys.fold(0.0, (a, b) => a + lotBuyFee(b));
   var sum = 0.0;
   for (final s in h.sells) {
     final amt = s.price * s.shares;
     final feeShare = bought == 0 ? 0 : totalBuyFee * s.shares / bought;
-    sum += amt - sellCost(amt, type) - cost * s.shares - feeShare;
+    sum += amt - lotSellCost(s, type) - cost * s.shares - feeShare;
   }
   return sum;
 }
@@ -765,7 +773,7 @@ HoldingEval evaluateHolding(
   final value = rawLast * shares;
   final costBasis =
       cost * shares +
-      h.buys.fold(0.0, (a, b) => a + buyFee(b.price * b.shares)) * (h.boughtShares == 0 ? 0 : shares / h.boughtShares);
+      h.buys.fold(0.0, (a, b) => a + lotBuyFee(b)) * (h.boughtShares == 0 ? 0 : shares / h.boughtShares);
   final unrealized = shares > 0 ? value - sellCost(value, type) - costBasis : 0.0;
   final rNow = (lastClose - c) / risk;
   final dist = (lastClose - stop) / lastClose * 100;

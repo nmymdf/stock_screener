@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -5,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_screener/data/history_store.dart';
 import 'package:stock_screener/data/holdings_store.dart';
 import 'package:stock_screener/data/local_store.dart';
+import 'package:stock_screener/data/stock_acc_source.dart';
 import 'package:stock_screener/logic/holding_eval.dart';
 import 'package:stock_screener/main.dart';
 import 'package:stock_screener/models/daily_bar.dart';
@@ -430,4 +432,84 @@ void main() {
       await tester.runAsync(() => tmp.delete(recursive: true));
     });
   }
+
+  testWidgets('持股兩組：有 stock_acc 才出現切換和同步；stock_acc 的持股不能在這裡記買賣；手動紀錄點開可以修改', (tester) async {
+    useTallScreen(tester);
+    final (tmp, store, dates) = await seededMarket(tester);
+    final b = store.rawSeriesOf('2330');
+    final buyDate = b[b.length - 30].date;
+    // 沒有 stock_acc：畫面跟以前一樣
+    final plain = await holdingsIn(tester, tmp);
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: plain));
+    await tester.pump();
+    await tester.tap(find.text('持股').last);
+    await tester.pumpAndSettle();
+    expect(find.text('同步 stock_acc'), findsNothing);
+    expect(find.textContaining('stock_acc 記帳'), findsNothing);
+
+    // 有 stock_acc
+    final accDir = Directory('${tmp.path}/stock_acc');
+    await tester.runAsync(() async {
+      accDir.createSync();
+      File('${accDir.path}/stock_acc_data.json').writeAsStringSync(
+        jsonEncode({
+          'trades': [
+            {
+              'id': 't1',
+              'accountId': 'a1',
+              'date': '${buyDate}T00:00:00.000',
+              'code': '2330',
+              'name': '台積電',
+              'side': 'buy',
+              'shares': 2000,
+              'price': b[b.length - 30].close,
+              'fee': 85,
+              'tax': 0,
+              'updatedAt': '2026-01-01T00:00:00.000',
+            },
+          ],
+        }),
+      );
+    });
+    final holdings = HoldingsStore(
+      store: LocalStore(dir: tmp),
+      accSource: StockAccSource(dir: accDir),
+    );
+    await tester.runAsync(holdings.load);
+    await tester.runAsync(
+      () => holdings.upsert(
+        Holding(id: 'm1', code: '2330', style: HoldStyle.swing, buys: [BuyLot(buyDate, b[b.length - 30].close, 1000)]),
+      ),
+    );
+    await tester.pumpWidget(StockScreenerApp(store: store, holdings: holdings));
+    await tester.pump();
+    await tester.tap(find.text('持股').last);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('手動／模擬'), findsWidgets);
+    await tester.tap(find.textContaining('stock_acc 記帳 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('同步 stock_acc'), findsOneWidget);
+    expect(find.text('stock_acc'), findsWidgets); // 卡片上的來源標籤
+    await tester.tap(find.text('2330 台積電').last);
+    await tester.pumpAndSettle();
+    expect(find.text('記錄賣出'), findsNothing);
+    expect(find.text('買賣紀錄（來自 stock_acc）'), findsOneWidget);
+    expect(find.textContaining('手續費 85'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    // 手動那筆：點買進紀錄改股數
+    Navigator.of(tester.element(find.byType(HomeShell)))
+        .push(MaterialPageRoute(builder: (_) => const HoldingDetailScreen(id: 'm1')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('× 1000 股'));
+    await tester.pumpAndSettle();
+    expect(find.text('修改買進紀錄'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextField, '股數（1 張 = 1000 股）'), '3000');
+    await tester.tap(find.text('儲存'));
+    await settleIo(tester);
+    expect(holdings.byId('m1')!.shares, 3000);
+
+    await tester.runAsync(() => tmp.delete(recursive: true));
+  });
 }
