@@ -295,12 +295,23 @@ Future<void> updateYear(Fetcher f, Directory dir, int year, {bool tpex = false})
     '$year：已有 ${py.days.length} 天、休市 ${py.closed.length} 天，要抓 ${todo.length} 天'
     '${py.partial.isEmpty ? '' : '，補 ${py.partial.length} 天缺的部分'}',
   );
-  var fails = 0, n = 0;
-  for (final date in todo) {
+  var fails = 0, n = 0, longWaits = 0;
+  for (var i = 0; i < todo.length; i++) {
+    final date = todo[i];
     final mi = await fetchMiIndex(f, date);
     if (mi == null) {
       fails++;
       print('  $date：抓不到（連續 $fails 次）');
+      // 多半是證交所暫時封鎖這台機器：先存檔、等一陣子再從同一天繼續
+      if (fails >= 3 && longWaits < 4) {
+        longWaits++;
+        saveYear(dir, py);
+        print('  可能被暫時封鎖，等 8 分鐘再試（第 $longWaits 次）');
+        await Future<void>.delayed(const Duration(minutes: 8));
+        fails = 0;
+        i--;
+        continue;
+      }
       if (fails >= 6) {
         print('  連續失敗太多次，先存檔停下來');
         break;
