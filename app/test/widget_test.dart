@@ -3,9 +3,11 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stock_screener/data/datapack_store.dart';
 import 'package:stock_screener/data/history_store.dart';
 import 'package:stock_screener/data/holdings_store.dart';
 import 'package:stock_screener/data/local_store.dart';
+import 'package:stock_screener/data/longterm_store.dart';
 import 'package:stock_screener/data/stock_acc_source.dart';
 import 'package:stock_screener/logic/holding_eval.dart';
 import 'package:stock_screener/main.dart';
@@ -19,6 +21,40 @@ import 'package:stock_screener/ui/screens/tools_screen.dart';
 import 'package:stock_screener/ui/widgets/charts.dart';
 
 import 'support/synthetic.dart';
+import 'support/synthetic_pack.dart';
+
+/// 測試用的 App：資料包放在 [packDir]（沒有就是還沒下載），分析不開 isolate、不連網。
+Future<StockScreenerApp> appIn(
+  WidgetTester tester,
+  Directory dir,
+  HistoryStore store, {
+  HoldingsStore? holdings,
+  Directory? packDir,
+}) async {
+  final h = holdings ?? await holdingsIn(tester, dir);
+  final pd = packDir ?? Directory('${dir.path}/datapack');
+  final pack = DataPackStore(dir: pd, base: 'http://127.0.0.1:9/none');
+  final lt = LongTermStore(
+    pack: pack,
+    history: store,
+    store: LocalStore(dir: dir),
+    useIsolate: false,
+  );
+  await tester.runAsync(lt.load);
+  await tester.runAsync(lt.refresh);
+  return StockScreenerApp(store: store, holdings: h, pack: pack, longTerm: lt);
+}
+
+/// 假資料包的本機狀態檔（假裝已經下載過）。
+void writePackState(Directory d) {
+  final files = <String, dynamic>{};
+  for (final f in d.listSync().whereType<File>()) {
+    final name = f.uri.pathSegments.last;
+    if (!name.endsWith('.json.gz')) continue;
+    files[name] = {'size': f.lengthSync(), 'hash': 'test'};
+  }
+  File('${d.path}/state.json').writeAsStringSync(jsonEncode({'lastDate': '2020-12-31', 'files': files}));
+}
 
 Future<HoldingsStore> holdingsIn(WidgetTester tester, Directory dir) async {
   final h = HoldingsStore(store: LocalStore(dir: dir));
@@ -60,15 +96,15 @@ void useTallScreen(WidgetTester tester) {
 }
 
 void main() {
-  testWidgets('沒有資料時：顯示說明和「開始抓歷史資料」，五個分頁都切得過去', (tester) async {
+  testWidgets('沒有資料時：組合頁請你下載長期資料，其他分頁都切得過去', (tester) async {
     final tmp = await tester.runAsync(() => Directory.systemTemp.createTemp('screener_widget'));
     final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false);
     await tester.runAsync(store.load);
 
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp!)));
+    await tester.pumpWidget(await appIn(tester, tmp!, store));
     await tester.pump();
-    expect(find.text('台股選股系統'), findsOneWidget);
-    expect(find.text('開始抓歷史資料'), findsOneWidget);
+    expect(find.text('先下載長期資料'), findsOneWidget);
+    expect(find.text('下載長期資料（約 30 MB）'), findsOneWidget);
 
     await tester.tap(find.text('市場'));
     await tester.pump();
@@ -76,11 +112,15 @@ void main() {
 
     await tester.tap(find.text('回測'));
     await tester.pump();
-    expect(find.text('策略回測'), findsOneWidget);
+    expect(find.text('先下載長期資料'), findsOneWidget);
+
+    await tester.tap(find.text('短線'));
+    await tester.pump();
+    expect(find.text('開始抓歷史資料'), findsOneWidget);
 
     await tester.tap(find.text('工具'));
     await tester.pump();
-    await tester.tap(find.text('資料管理'));
+    await tester.tap(find.text('每日行情（短線、持股、圖表用）'));
     await tester.pumpAndSettle();
     expect(find.text('清除所有歷史資料'), findsOneWidget);
 
@@ -94,13 +134,13 @@ void main() {
     final tmp = await tester.runAsync(() => Directory.systemTemp.createTemp('screener_widget'));
     final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false);
     await tester.runAsync(store.load);
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp!)));
+    await tester.pumpWidget(await appIn(tester, tmp!, store));
     await tester.pump();
     expect(find.byType(NavigationRail), findsOneWidget);
     await tester.runAsync(() => tmp.delete(recursive: true));
   });
 
-  testWidgets('有資料時：推薦、市場、產業、回測、個股報告都畫得出來', (tester) async {
+  testWidgets('有每日行情時：短線訊號、市場、產業、個股報告都畫得出來', (tester) async {
     useTallScreen(tester);
     final dates = tradingDays(260);
     final tmp = await tester.runAsync(() async {
@@ -124,9 +164,11 @@ void main() {
     await tester.runAsync(store.load);
     expect(store.analysis?.latestDate, dates.last);
 
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp!)));
+    await tester.pumpWidget(await appIn(tester, tmp!, store));
     await tester.pump();
-    expect(find.text('今日推薦'), findsOneWidget);
+    await tester.tap(find.text('短線').first);
+    await tester.pumpAndSettle();
+    expect(find.text('短線訊號'), findsWidgets);
     expect(find.text('通過否決＝推薦'), findsOneWidget);
 
     await tester.tap(find.text('市場').first);
@@ -151,15 +193,48 @@ void main() {
     await tester.pageBack();
     await tester.pumpAndSettle();
 
+    await tester.runAsync(() => tmp.delete(recursive: true));
+  });
+
+  testWidgets('長期：組合、回測、市場、個股報告的長期部分都畫得出來', (tester) async {
+    useTallScreen(tester);
+    final tmp = await tester.runAsync(() => Directory.systemTemp.createTemp('screener_widget'));
+    final packDir = await tester.runAsync(() async {
+      final d = await Directory.systemTemp.createTemp('screener_pack');
+      writeSyntheticPack(d);
+      writePackState(d);
+      return d;
+    });
+    final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false);
+    await tester.runAsync(store.load);
+    final app = await appIn(tester, tmp!, store, packDir: packDir);
+    expect(app.longTerm.result, isNotNull);
+    await tester.pumpWidget(app);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('策略目前持有'), findsOneWidget);
+    expect(find.text('候補名單'), findsOneWidget);
+    expect(find.textContaining('市場環境：'), findsOneWidget);
+
     await tester.tap(find.text('回測').first);
-    await tester.pump();
-    await tester.tap(find.text('開始回測'));
-    await tester.pump();
-    await tester.pump();
-    expect(store.backtest, isNotNull);
-    expect(find.text('白話結論'), findsOneWidget);
+    await tester.pumpAndSettle();
+    expect(find.text('因子研究：分數高的股票之後真的比較好嗎？'), findsOneWidget);
+    expect(find.text('不同設定比較'), findsOneWidget);
+    expect(find.text('逐年'), findsOneWidget);
+
+    await tester.tap(find.text('市場').first);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('國際資料用台股前一天以前的美國收盤'), findsOneWidget);
+
+    final top = app.longTerm.result!.live.ranked.first.code;
+    Navigator.of(tester.element(find.byType(HomeShell)))
+        .push(MaterialPageRoute(builder: (_) => StockReportScreen(code: top)));
+    await tester.pumpAndSettle();
+    expect(find.text('六大類分數（全市場百分位）'), findsOneWidget);
+    expect(find.textContaining('含息走勢'), findsOneWidget);
+    expect(find.text('長期數據'), findsOneWidget);
 
     await tester.runAsync(() => tmp.delete(recursive: true));
+    await tester.runAsync(() => packDir!.delete(recursive: true));
   });
 
   testWidgets('自訂條件篩選：列出結果，點進去是個股報告', (tester) async {
@@ -180,11 +255,11 @@ void main() {
     final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false)..lookbackDays = 5000;
     await tester.runAsync(store.load);
 
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp!)));
+    await tester.pumpWidget(await appIn(tester, tmp!, store));
     await tester.pump();
-    await tester.tap(find.text('工具'));
-    await tester.pump();
-    await tester.tap(find.text('自訂條件篩選'));
+    await tester.tap(find.text('短線'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('自訂篩選'));
     await tester.pumpAndSettle();
     expect(find.textContaining('符合 1 檔'), findsOneWidget);
     await tester.tap(find.textContaining('2330 台積電'));
@@ -233,21 +308,36 @@ void main() {
         ),
       ),
     );
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: holdings));
+    final packDir = await tester.runAsync(() async {
+      final d = await Directory.systemTemp.createTemp('screener_pack');
+      writeSyntheticPack(d);
+      writePackState(d);
+      return d;
+    });
+    await tester.pumpWidget(await appIn(tester, tmp, store, holdings: holdings, packDir: packDir));
     await tester.pump();
     expect(find.byType(NavigationBar), findsOneWidget);
-    for (final tab in ['持股', '市場', '產業', '回測', '工具', '推薦']) {
-      await tester.tap(find.text(tab).last);
+    // 8 個分頁：手機上只有選到的顯示文字，用圖示切換
+    for (final icon in [
+      Icons.account_balance_wallet_outlined,
+      Icons.compare_arrows_outlined,
+      Icons.speed_outlined,
+      Icons.category_outlined,
+      Icons.science_outlined,
+      Icons.build_outlined,
+      Icons.bolt_outlined,
+    ]) {
+      await tester.tap(find.byIcon(icon).last);
       await tester.pump();
     }
     for (final mode in ['觀察池', '被否決', '推薦']) {
       await tester.tap(find.textContaining(mode).first);
       await tester.pump();
     }
-    await tester.tap(find.text('回測').last);
+    await tester.tap(find.byIcon(Icons.pie_chart_outline).last);
     await tester.pump();
-    await tester.tap(find.text('開始回測'));
-    await tester.pump();
+    expect(find.textContaining('策略目前持有'), findsOneWidget);
+    await tester.tap(find.text('依我的持股汰弱留強'));
     await tester.pump();
     Navigator.of(tester.element(find.byType(HomeShell)))
         .push(MaterialPageRoute(builder: (_) => const StockReportScreen(code: '2330')));
@@ -256,6 +346,7 @@ void main() {
     final nav = Navigator.of(tester.element(find.byType(HomeShell, skipOffstage: false)));
     for (final page in <Widget>[
       const MethodScreen(),
+      const DataPackScreen(),
       IndustryDetailScreen(name: store.analysis!.industries.first.name),
       const HoldingDetailScreen(id: 'p1'),
     ]) {
@@ -263,13 +354,14 @@ void main() {
       await tester.pumpAndSettle();
     }
     await tester.runAsync(() => tmp.delete(recursive: true));
+    await tester.runAsync(() => packDir!.delete(recursive: true));
   });
 
   testWidgets('持股：從個股報告「我已進場」加入，持股頁看得到狀態，點進去有停損與紀錄', (tester) async {
     useTallScreen(tester);
     final (tmp, store, dates) = await seededMarket(tester);
     final holdings = await holdingsIn(tester, tmp);
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: holdings));
+    await tester.pumpWidget(await appIn(tester, tmp, store, holdings: holdings));
     await tester.pump();
 
     await tester.tap(find.text('持股').first);
@@ -325,7 +417,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: holdings));
+    await tester.pumpWidget(await appIn(tester, tmp, store, holdings: holdings));
     await tester.pump();
     Navigator.of(tester.element(find.byType(HomeShell)))
         .push(MaterialPageRoute(builder: (_) => const HoldingDetailScreen(id: 'h1')));
@@ -363,7 +455,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: holdings));
+    await tester.pumpWidget(await appIn(tester, tmp, store, holdings: holdings));
     await tester.pump();
     Navigator.of(tester.element(find.byType(HomeShell)))
         .push(MaterialPageRoute(builder: (_) => const HoldingDetailScreen(id: 'h2')));
@@ -394,7 +486,7 @@ void main() {
       final (tmp, store, _) = await seededMarket(tester);
       final codes = store.analysis!.stocks.where((s) => s.code != '2330').take(2).map((s) => s.code).toList();
       await tester.runAsync(() => store.setCompareCodes(['2330']));
-      await tester.pumpWidget(StockScreenerApp(store: store, holdings: await holdingsIn(tester, tmp)));
+      await tester.pumpWidget(await appIn(tester, tmp, store));
       await tester.pump();
       await tester.tap(find.text('比較').last);
       await tester.pumpAndSettle();
@@ -441,7 +533,7 @@ void main() {
     final buyDate = b[b.length - 30].date;
     // 沒有 stock_acc：畫面跟以前一樣
     final plain = await holdingsIn(tester, tmp);
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: plain));
+    await tester.pumpWidget(await appIn(tester, tmp, store, holdings: plain));
     await tester.pump();
     await tester.tap(find.text('持股').last);
     await tester.pumpAndSettle();
@@ -482,7 +574,7 @@ void main() {
         Holding(id: 'm1', code: '2330', style: HoldStyle.swing, buys: [BuyLot(buyDate, b[b.length - 30].close, 1000)]),
       ),
     );
-    await tester.pumpWidget(StockScreenerApp(store: store, holdings: holdings));
+    await tester.pumpWidget(await appIn(tester, tmp, store, holdings: holdings));
     await tester.pump();
     await tester.tap(find.text('持股').last);
     await tester.pumpAndSettle();

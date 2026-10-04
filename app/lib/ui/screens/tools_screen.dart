@@ -1,14 +1,15 @@
-/// 「工具」：自訂條件篩選、今日即時雷達、資料管理、方法說明。
+/// 「工具」：方法說明、長期資料包、每日行情資料管理。
 library;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
-import '../layout.dart';
 import '../../app_build_info.dart';
+import '../../data/datapack_store.dart';
+import '../../data/longterm_store.dart';
+import '../layout.dart';
 import '../widgets/score_widgets.dart';
 import 'data_screen.dart';
-import 'radar_screen.dart';
-import 'technical_screen.dart';
 
 class ToolsScreen extends StatelessWidget {
   const ToolsScreen({super.key});
@@ -34,28 +35,147 @@ class ToolsScreen extends StatelessWidget {
         onTap: onTap,
       ),
     );
+    final pack = context.watch<DataPackStore>();
     return ListView(
       padding: pagePadding(context),
       children: [
-        const PageHeader(icon: Icons.build, title: '工具', subtitle: '方法說明、自訂篩選、即時雷達、資料管理'),
+        const PageHeader(icon: Icons.build, title: '工具', subtitle: '方法說明、長期資料包、每日行情'),
         tile(
           Icons.menu_book_outlined,
           '系統方法說明',
-          '每個引擎怎麼算、對應規格書哪一章、還沒做的部分',
+          '六大類因子、組合規則、市場環境、汰弱留強、回測怎麼做、資料來源',
           () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const MethodScreen())),
         ),
         tile(
-          Icons.filter_alt_outlined,
-          '自訂條件篩選',
-          '自己勾均線、RSI、量比、新高等條件篩全市場',
-          () => push('自訂條件篩選', const TechnicalScreen()),
+          Icons.cloud_download_outlined,
+          '長期資料包',
+          pack.hasPack ? '資料到 ${pack.lastDate ?? '—'}，本機 ${(pack.localBytes / 1e6).toStringAsFixed(1)} MB' : '還沒下載',
+          () => push('長期資料包', const DataPackScreen()),
         ),
-        tile(Icons.radar, '今日即時雷達', '盤中用即時報價排出今天動能最強的股票（stock_acc 的選股雷達）', () => push('今日即時雷達', const RadarScreen())),
-        tile(Icons.storage_outlined, '資料管理', '歷史資料同步、回看天數、存放位置、清除', () => push('資料管理', const DataScreen())),
+        tile(Icons.storage_outlined, '每日行情（短線、持股、圖表用）', '回看天數、同步狀態、存放位置、清除', () => push('每日行情', const DataScreen())),
         const SizedBox(height: 16),
         Center(child: Text('台股選股 $kAppVersion', style: Theme.of(context).textTheme.bodySmall)),
       ],
     );
+  }
+}
+
+class DataPackScreen extends StatelessWidget {
+  const DataPackScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final pack = context.watch<DataPackStore>();
+    final lt = context.read<LongTermStore>();
+    final files = pack.local.values.toList()..sort((a, b) => a.name.compareTo(b.name));
+    return ListView(
+      padding: const EdgeInsets.all(14),
+      children: [
+        SectionCard(
+          title: '狀態',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              KvRow('資料到', pack.lastDate ?? '—'),
+              KvRow('上次檢查', pack.lastCheck == null ? '—' : pack.lastCheck!.toLocal().toString().substring(0, 16)),
+              KvRow('本機大小', '${(pack.localBytes / 1e6).toStringAsFixed(1)} MB（${files.length} 個檔案）'),
+              const SizedBox(height: 8),
+              if (pack.updating) ...[
+                LinearProgressIndicator(value: pack.totalBytes > 0 ? pack.doneBytes / pack.totalBytes : null),
+                const SizedBox(height: 4),
+                Text(
+                  pack.totalBytes > 0
+                      ? '下載中… ${(pack.doneBytes / 1e6).toStringAsFixed(1)} / ${(pack.totalBytes / 1e6).toStringAsFixed(1)} MB'
+                      : '檢查中…',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ] else
+                Wrap(
+                  spacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: lt.updatePack,
+                      icon: const Icon(Icons.sync, size: 18),
+                      label: Text(pack.hasPack ? '檢查更新' : '下載長期資料（約 30 MB）'),
+                    ),
+                    if (pack.hasPack)
+                      OutlinedButton.icon(
+                        onPressed: () => _confirmClear(context, pack),
+                        icon: const Icon(Icons.delete_outline, size: 18),
+                        label: const Text('刪除本機資料包'),
+                      ),
+                  ],
+                ),
+              if (pack.error != null) ...[
+                const SizedBox(height: 6),
+                Text(pack.error!, style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 13)),
+              ],
+            ],
+          ),
+        ),
+        const SectionCard(
+          title: '資料從哪裡來',
+          child: Bullets([
+            'GitHub Actions 每個交易日台北時間 21:30 左右自動抓、整理、打包，放在本專案的 GitHub Releases「data」。',
+            '證交所：每日收盤行情與加權指數、發行量加權股價報酬指數（含息）、本益比／股價淨值比／殖利率、三大法人買賣超、除權息。',
+            '公開資訊觀測站：上市公司每月營收（同時記錄當時報表的去年同月營收）。',
+            'Yahoo Finance：費城半導體、Nasdaq、VIX、美元兌台幣、美國 10 年期公債殖利率。',
+            'App 打開時會檢查更新，之後每小時一次；今天 15:00 以後的收盤仍然直接跟證交所抓，不用等晚上的資料包。',
+            '只有下載、不會上傳任何東西；持股和 stock_acc 的資料只留在這台電腦。',
+          ], BulletKind.info),
+        ),
+        if (files.isNotEmpty)
+          SectionCard(
+            title: '本機檔案',
+            child: Column(
+              children: [
+                for (final f in files)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 3),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(f.name, style: const TextStyle(fontSize: 13)),
+                              if (f.first != null || f.last != null)
+                                Text(
+                                  '${f.first ?? ''}${f.last == null ? '' : '～${f.last}'}',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                            ],
+                          ),
+                        ),
+                        Text('${(f.size / 1e6).toStringAsFixed(2)} MB', style: Theme.of(context).textTheme.bodySmall),
+                      ],
+                    ),
+                  ),
+                if (pack.dirPath != null) ...[
+                  const Divider(),
+                  SelectableText(pack.dirPath!, style: const TextStyle(fontSize: 12)),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _confirmClear(BuildContext context, DataPackStore pack) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('刪除本機資料包？'),
+        content: const Text('長期分析的資料會被刪掉，之後要重新下載（約 30 MB）。持股紀錄不受影響。'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('刪除')),
+        ],
+      ),
+    );
+    if (ok == true) await pack.clear();
   }
 }
 
@@ -75,103 +195,73 @@ class MethodScreen extends StatelessWidget {
             padding: const EdgeInsets.all(14),
             children: [
               const Text(
-                '核心原則（規格書 §1）：系統不是預測「明天一定漲哪一檔」，而是找出在目前市場環境下條件較有利的股票，'
-                '並把每次判斷錯誤的損失限制在可控範圍內。市場先於個股、產業先於個股、風險管理先於報酬。',
+                '核心原則：長期投資（持有 1～6 個月以上），找「穩定成長、體質好、價格合理、有人在買」的上市公司，'
+                '分散成 10～15 檔，每月檢視一次、汰弱留強。不一大漲就追、不一下跌就賣；規則事先決定，不拿回測結果去調。',
                 style: TextStyle(fontSize: 14, height: 1.5),
               ),
               const SizedBox(height: 8),
-              sec('資料', [
-                '每個交易日抓一次證交所（上市）＋櫃買中心（上櫃）全市場收盤行情，存在本機；包含當天所有股票（含之後下市的），回測沒有存活者偏差。',
-                '除權息還原：用交易所公布的漲跌價差推回參考價，偵測除權息日，把之前的價格等比例還原（§14）。',
-                '產業別來自證交所／櫃買的官方分類（34 個產業）。',
+              sec('選股範圍', [
+                '上市普通股（四位數代號、不含 ETF、特別股、存託憑證），包含之後下市的股票（回測沒有存活者偏差）。',
+                '新買進還要：近 60 個交易日平均每天成交 5,000 萬元以上、股價 10 元以上、上市滿一年。',
+                '上櫃、ETF 不做長期評分（流動性與資訊揭露差異大）；持股裡有的會標「不在評分範圍」。',
               ]),
-              sec('市場環境引擎（§2）', [
-                '大盤多週期趨勢（25%）：指數對 20／60／240 日線的位置與斜率，近似日線、週線、月線。',
-                '市場廣度（55%）：站上 20／60／120／240 日線的股票比例、10 日上漲下跌家數、20 日新高新低家數。',
-                '恐慌指標（10%）：5 日漲停與跌停家數。',
-                '指數在月線上、但站上月線的股票不到 40% → 扣分並提醒「漲勢集中在少數股票」。',
-                '分成五種狀態，決定建議曝險和個股推薦門檻；空頭時停止一般多單。',
+              sec('六大類分數（每月檢視日計算，全市場百分位）', [
+                '動能趨勢 20%：近 12 個月（扣掉最近 1 個月）與近 6 個月的含息報酬、站上年線的程度（超過 30% 不再加分）、年線方向。',
+                '營收成長 20%：近 3 個月營收年增率、近 12 個月有幾個月成長、近 12 個月累計年增、成長加速。年增率一律用同一份月報的「去年同月營收」算。',
+                '獲利品質 20%：ROE（＝股價淨值比 ÷ 本益比，近四季）的高低與近 3 年穩定度、每股盈餘一年來的成長；虧損排最後。',
+                '價值股利 20%：本益比在自己過去 5 年的位置、盈餘殖利率、現金殖利率（殖利率陷阱不加分）、近 5 年配息年數。',
+                '法人籌碼 10%：外資、投信近 60 個交易日買賣超佔成交量的比例。',
+                '穩定度 10%：近一年波動度、一年內最大跌幅（越小越好）。',
+                '總分＝有資料的類別依權重加權；短期過熱扣 8 分、虧損扣 5 分。',
               ]),
-              sec('產業輪動引擎（§3）', [
-                '成員股 20／60／120 日報酬中位數、站上 20／60 日線比例、創 60 日新高比例、成交值變化，跟其他產業比排名 → 0～100 分。',
-                '跟 10 個交易日前的分數比，分成領先、改善、同步、轉弱、落後。',
+              sec('警示旗標與「長期理由破壞」', [
+                '短期過熱：一個月漲超過 30% 或股價高出年線 30%——不追高，等回穩。',
+                '年線下彎：股價在年線下、年線也往下。營收衰退：近 3 個月年減 10% 以上且一年中多數月份衰退。',
+                '殖利率陷阱：配的比賺的多（配息率 > 100%），或殖利率很高但獲利大減。',
+                '長期理由破壞＝年線下彎＋營收衰退、虧損＋年線下彎、或總分掉到全市場後 15%：不受「至少抱 3 個月」限制，建議換掉。',
+              ], kind: BulletKind.warn),
+              sec('理想組合規則', [
+                '每月 11 日以後第一個交易日收盤後檢視（月營收 10 日前公布完），隔天收盤調整。',
+                '新買：總分前 10%、沒有過熱、沒有虧損、長期理由成立。續抱：還在前 30% 就不動。',
+                '至少抱 3 個月（約 63 個交易日），除非長期理由破壞。每月最多換 5 檔（可改 2～5），換上去的要比換下來的百分位高 20 以上。',
+                '權重：分數 ÷ 波動度，分數高、波動低的配越多；單一檔最多 15%（漲到 20% 以上調回 15%）、單一產業最多 30%。',
+                '「組合」頁的理想組合，就是同一套規則從 2014 年一路操作到今天的實際持股，所以回測成績就是它過去的成績。',
               ]),
-              sec('個股評分（§7、§8、§10）', [
-                '趨勢 15%：EMA20／50／100／200、多頭排列、EMA50 斜率、ADX+DI、MACD。',
-                '相對強度 10%：20／60／120／250 日報酬加權後的全市場排名。',
-                '動能 10%：RSI 用順勢解讀（50～75 最健康，不採用「低於 30 必買」）、ROC、MACD 柱、KD（只作輔助）。',
-                '量價 10%：上漲日量 vs 下跌日量、OBV、價漲量增、回檔量縮。',
-                '突破 5%：20／60／250 日新高、離 52 週高點距離。',
-                '波動／型態 5%：布林帶寬低分位、ATR% 下降、NR7、Inside Bar（型態只加分）。',
-                '市場 10%、產業 10%。',
-                '總分＝有資料的模組依權重加權平均；基本面 15%、籌碼 10% 還沒接資料，暫不列入。',
+              sec('市場環境（建議股票比例）', [
+                '台股：加權指數在不在年線上、年線方向、站上年線的股票比例 → 積極 100%／中性 75%／保守 50%。',
+                '國際（可選）：費城半導體跌破年線且年線下彎、Nasdaq 跌破年線、VIX 十日平均 > 25、台幣三個月貶值 > 3%、美債殖利率半年上升 > 0.75 個百分點；五項中三項以上就再降一級。',
+                '國際資料只用台股前一天以前的美國收盤（美國收盤在台灣開盤之前），只調整股票比例、不用來挑股票。',
+                '只在每月檢視日調整，按比例減碼、不換股；單日大跌不會叫你賣。回測頁可以比較「一直滿倉」「看台股」「台股＋國際」三種。',
               ]),
-              sec('進場訊號（§9）', [
-                'A 突破型：20 日窄幅整理（振幅 ≤ 25%）後，收盤突破 20 日高點、量 ≥ 1.5 倍、在 50／200 日線之上；RS 前 30%。',
-                'B 回檔型：強勢股（近期創 60 日新高）回檔 ≥ 1.5 ATR 碰到 20／50 日線、量縮、RSI 回落到 35～52 後站回 50、收盤過昨高；RS 前 30%。',
-                'C 趨勢延續型：前段已漲 ≥ 20%、10 天平台整理守在 50 日線上，放量突破平台；RS 前 20%。',
-                'D 均值回歸型：只在震盪盤；超跌（RSI ≤ 32 或跌破布林下軌）後停止破底、收紅過昨高，目標回到 20 日線。',
+              sec('依我的持股汰弱留強', [
+                '續抱：長期理由還在、排名在前段。觀察：排名中後段、或有年線下彎／營收衰退／獲利大減，或持有未滿 3 個月。',
+                '建議汰換：長期理由破壞，或排名後 30% 又抱超過 3 個月。最弱的先換，一個月最多換你設定的檔數（2～5）。',
+                '替代股：總分前 15%、比被換掉的百分位高 25 以上、不過熱、不虧損、換了之後產業不超過 30%。',
+                '另外提醒：單一檔超過 15%、單一產業超過 30%、檔數太少。',
               ]),
-              sec('一票否決（§10.2）', [
-                '流動性不足：20 日平均成交值 < 3,000 萬或均量 < 300 張。',
-                '市場空頭／極端風險。',
-                '歷史資料不足 60 天。',
-                '合理停損過寬（> 3 ATR 或 > 10%）。',
-                '報酬風險比不足（到目標或上方前高 < 2R；均值回歸 < 1.5R）。',
-                '總分未達目前市場狀態的門檻；RS、趨勢分數未達策略要求。',
+              sec('回測與因子研究（不偷看未來）', [
+                '本益比、殖利率用當天公布的值；月營收保守假設每月 11 日以後才知道上個月的；股價只用當天以前的；除權息照實際參考價。',
+                '扣成本：買進手續費 0.1425% ＋ 滑價 0.1%，賣出再加證交稅 0.3%；配息再投入（總報酬）。',
+                '比較基準：加權股價報酬指數（含息），以及「全部可投資股票平均分配」。',
+                '另外列出：逐年、每月贏指數比例、每筆持股賺錢比例、週轉率、前後半段、大跌期間、不同設定比較。',
+                '因子研究：每月依分數分五組，看之後 3 個月的超額報酬與資訊係數（IC），檢查每類分數是不是真的有用。',
+                '最新一天（現在）的評分則用手上所有已公布的資料（例如當月 5 日公布的營收）。',
               ]),
-              sec('交易計畫與風控（§11、§12、§14）', [
-                '停損：結構停損（突破點、回檔低點、平台低點），不到 1 ATR 會放寬到 1 ATR；所有價格對齊台股跳動單位。',
-                '目標 2R 先出一半；+1R 後停損拉到成本；之後用「22 日最高 − 3 ATR」移動停利；10 天沒有 +1R 就出場。',
-                '不提供建議股數：每個人資金不同，畫面只給每股風險（1R）、停損距離、報酬風險比。',
-                '加碼時機（只加贏家）：+1R 停損拉到成本之後第一次（≤ 原始一半），回檔不破 20 日線再轉強或整理後再突破第二次（≤ 四分之一）；虧損中禁止加碼。',
-                '可接受最高買價＝收盤 + 0.5 ATR，隔天開盤超過就不追。收漲停的股票會提醒可能買不到。',
+              sec('持股（長期模式）', [
+                '長期持有：看年線和「從持有期間高點回落多少」（預設 25%）提醒減碼，不用短線停損。',
+                '每檔持股顯示長期總分與旗標；排名掉到後段或理由破壞會列在「需要注意」。',
+                '股利：依證交所除權息資料（上櫃用參考價推算）估算持有期間領到的現金股利。',
+                'stock_acc 同步：只讀不寫，資料不離開這台電腦；沒有 stock_acc 的電腦整組隱藏。',
               ]),
-              sec('短中長交叉分析（最終版 §02）', [
-                '短期（3～10 交易日）：動能、量價狀態、20 日相對強度、位置、離 20 日線的乖離。',
-                '中期（2～8 週）：日線趨勢、60／120 日相對強度、產業動能、資金累積（價量持續性）、市場。',
-                '長期（技術面）：年線位置與方向、長期均線排列、一年相對強度、離高點距離、一年最大回檔、波動穩定度；要 200 天以上資料。',
-                '三個分數各有自己的失效條件。依三者強弱分成：三週期共振、波段機會、長線股短線轉強、純短線戰術、中長期佳等進場點、好股票時機未到、題材波段、證據不足、三週期都弱。',
-                '觀察池：中長期條件好但今天沒有進場訊號的股票，列出「什麼情況會變成可以買」（突破價、回檔區）。',
+              sec('短線（最右邊的「短線」分頁）', [
+                'A 突破、B 回檔、C 趨勢延續、D 超跌反彈四種進場訊號，搭配市場、產業、相對強度的一票否決與交易計畫。',
+                '短線規則用過去資料回測扣成本後並沒有穩定賺錢，所以只留著參考：給喜歡短線的朋友，或挑長期股票的進場時機（避開過熱）。',
+                '今日雷達（盤中即時報價）、自訂條件篩選也在那裡。',
               ]),
-              sec('持有期間 D1～D3 與信心度（最終版 §03）', [
-                '證據來源依規格書權重：產業週期 18%、中長期趨勢 12%、相對強弱持續性 10%、價量持續性 10%、市場 8%；公司品質 22%、獲利動能 15%、事件 5% 還沒有資料，不列入。',
-                'D3（2～6 個月）要長期、中期、趨勢持續性、多期間相對強度都強；D2（2～8 週）要中期分數與趨勢；D1（3～10 天）主要靠訊號和短線。',
-                '市場弱勢、均值回歸、產業轉弱、信心度低、下跌放量都會往下調一級或以上，並寫出原因。',
-                '信心度：多組獨立證據同向且資料滿一年是高；有 1 組矛盾是中；靠單一訊號或證據矛盾是低。',
-                '每一檔都寫出「為什麼是這個期間、為什麼還不是更長、升級條件、降級條件、理由失效條件」。沒有基本面前，上限是 D3。',
-              ]),
-              sec('價量持續性（最終版 §04）', [
-                '五種狀態：健康上升、突破確認、爆量不漲、下跌放量、縮量整理。',
-                '價量持續性：60 天上漲日量 ÷ 下跌日量、OBV 方向、下跌放量的天數。',
-                '突破品質：突破級別（20／60／120／250 日新高）、量能倍數、收盤位置、後續有沒有守住、乖離、大盤與產業是否同步。',
-              ]),
-              sec('歷史勝率與典型走勢', [
-                '用本機所有資料、跟推薦完全相同的條件，把過去每一次訊號的結果統計起來（隔天開盤進場、扣成本）。',
-                '分組：同一種訊號＋同一種市場狀態；樣本少於 10 次時改用這種訊號在所有市場狀態的統計。',
-                '典型走勢區間：買進後第 1／3／5／10／15／20 天的 R 中位數和 25%～75% 範圍；持股落在範圍下方會提醒「落後同類訊號」。',
-                '平均是虧損的訊號組合，推薦卡片會警告要更保守。',
-              ]),
-              sec('持股每日追蹤（最終版 §14、§15）', [
-                '從買進那天起每個交易日一筆紀錄：收盤、損益（% 和 R）、停損（有上調會標出）、當天發生的事、持續建議和原因、健康度、持有週期。',
-                '持續建議：續抱、續抱但注意、可以加碼、先賣一半、出場、停損出場、應已出場未處理（第 N 天）。',
-                '健康度：每天檢查買進理由還成立嗎——守住 20 日線（長期看季線）、趨勢向上、贏過大盤、量價沒有出貨、動能、市場、離停損的緩衝。連續兩天低於 40，跌破停損前就先建議減碼一半。',
-                '持有週期每天重估：只有在已經獲利 +1R 以上才會升級；降級隨時發生。虧損中不能把短線改成更長的持有方式。',
-                '出場優先順序：風險（停損）＞理由失效＞價格／時間停損＞移動停利。',
-                '明日劇本：收盤在哪個價位該停損、警戒、續抱、加碼。',
-                '紀律：出場訊號出現後你準時處理、晚處理還是提前賣，統計準時率和晚處理多賠的金額。',
-              ]),
-              sec('回測（§15）', [
-                '推薦和回測用同一套函式；第 t 天收盤訊號、t+1 開盤進場，不偷看未來。',
-                '扣手續費、證交稅、滑價；跌停鎖死那天賣不掉。',
-                '前段／後段比較、壓力測試（滑價 ×2、成本 ×1.5、晚一天進場）、Monte Carlo 最大回撤。',
-              ]),
-              sec('還沒做（需要新的資料來源或不適合放在這個 App）', [
-                '基本面（§5、最終版 §09～§10）：月營收、財報、估值、股利，要用「實際公告日」避免偷看未來；接上後長期分數才完整，持有期間才可能到 D4／D5。',
-                '籌碼（§6）：三大法人、融資融券、借券。',
-                '全球風險環境（最終版 §05）、60／15 分鐘盤中週期（§2.1、§9）、事件與 AI 解讀。',
-                '自動下單（§13）：需要券商 API 或 MultiCharts，牽涉真實帳戶，不放在這個 App。',
-                '投資組合層級：持股相關性、Portfolio Beta、Portfolio Heat（需要實際持股資料）。',
+              sec('限制', [
+                '資料從 2013 年開始（月營收改合併報表之後）；回測從 2014 年起，約 12 年，涵蓋 2015、2018、2020、2022 幾次大跌。',
+                '財報只用本益比、淨值比推算的 ROE、EPS（近四季），沒有現金流、負債比等細項。',
+                '過去的成績不代表未來；這是依公開資料與固定規則算出的參考，不是投資建議。',
               ], kind: BulletKind.warn),
             ],
           ),

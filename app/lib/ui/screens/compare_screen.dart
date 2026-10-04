@@ -7,6 +7,9 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/factors.dart';
+import '../../data/longterm_store.dart';
+
 import '../../data/history_store.dart';
 import '../../data/holdings_store.dart';
 import '../../data/stock_catalog.dart';
@@ -472,7 +475,6 @@ class _SingleView extends StatelessWidget {
               ],
             ),
           ),
-        if (r.calibration != null) SectionCard(title: '歷史上同類訊號', child: CalibrationView(r.calibration!)),
       ],
     );
   }
@@ -713,10 +715,10 @@ class _CompareTable extends StatelessWidget {
   static final _metrics = <_Metric>[
     _Metric('收盤', (r, s) => f2(r.close)),
     _Metric('今日漲跌', (r, s) => _p(r.changePct), value: (r, s) => r.changePct, better: _Better.higher),
-    _Metric('總分', (r, s) => _s(r.total), value: (r, s) => r.total, better: _Better.higher),
+    _Metric('短線總分', (r, s) => _s(r.total), value: (r, s) => r.total, better: _Better.higher),
     _Metric('短期分數', (r, s) => _s(r.short.score), value: (r, s) => r.short.score, better: _Better.higher),
     _Metric('中期分數', (r, s) => _s(r.medium.score), value: (r, s) => r.medium.score, better: _Better.higher),
-    _Metric('長期分數', (r, s) => _s(r.long.score), value: (r, s) => r.long.score, better: _Better.higher),
+    _Metric('長期技術分數', (r, s) => _s(r.long.score), value: (r, s) => r.long.score, better: _Better.higher),
     _Metric('機會類型', (r, s) => r.opportunity.label),
     _Metric('預估持有', (r, s) => r.duration.cls == null ? '不建議' : 'D${r.duration.cls} ${kDurationRange[r.duration.cls]}'),
     _Metric('信心度', (r, s) => r.duration.confidence.label),
@@ -764,14 +766,6 @@ class _CompareTable extends StatelessWidget {
       better: _Better.lower,
     ),
     _Metric('20 日均成交值', (r, s) => valueTxt(r.avgValue20), value: (r, s) => r.avgValue20, better: _Better.higher),
-    _Metric(
-      '同類訊號歷史',
-      (r, s) => r.calibration == null
-          ? '—'
-          : '賺錢 ${(r.calibration!.winRate * 100).toStringAsFixed(0)}%・${r.calibration!.avgR >= 0 ? '+' : ''}${r.calibration!.avgR.toStringAsFixed(2)}R',
-      value: (r, s) => r.calibration?.avgR,
-      better: _Better.higher,
-    ),
   ];
 
   @override
@@ -803,6 +797,39 @@ class _CompareTable extends StatelessWidget {
         ],
       ),
     ];
+    // 長期評分（資料包）放最前面
+    final lt = context.watch<LongTermStore>().result;
+    final lts = [for (final r in reports) lt?.scoreOf(r.code)];
+    void ltRow(String name, String Function(LtScore s) text, [double? Function(LtScore s)? value]) {
+      int? bestIdx;
+      double? bv;
+      for (var k = 0; k < reports.length; k++) {
+        final s = lts[k];
+        final v = s == null || value == null ? null : value(s);
+        if (v == null || v.isNaN) continue;
+        if (bv == null || v > bv) {
+          bv = v;
+          bestIdx = k;
+        }
+      }
+      rows.add(
+        Row(
+          children: [
+            cell(name, first: true),
+            for (var k = 0; k < reports.length; k++) cell(lts[k] == null ? '—' : text(lts[k]!), best: k == bestIdx),
+          ],
+        ),
+      );
+    }
+
+    if (lts.any((s) => s != null)) {
+      ltRow('長期總分', (s) => s.composite.toStringAsFixed(0), (s) => s.composite);
+      ltRow('長期排名', (s) => '第 ${s.rank} 名（前 ${((1 - s.pct) * 100).clamp(1, 100).toStringAsFixed(0)}%）', (s) => s.pct);
+      for (final g in FactorGroup.values) {
+        ltRow('・${g.label}', (s) => s.groups[g]?.toStringAsFixed(0) ?? '—', (s) => s.groups[g]);
+      }
+      ltRow('長期警示', (s) => s.flags.isEmpty ? '—' : s.flags.map((f) => f.label).join('、'));
+    }
     for (final m in _metrics) {
       int? bestIdx;
       if (m.better != _Better.none && m.value != null) {

@@ -13,13 +13,16 @@ import 'sync_status.dart';
 
 class AnalysisGate extends StatelessWidget {
   final List<Widget> Function(BuildContext context, AnalysisResult a) builder;
-  const AnalysisGate({super.key, required this.builder});
+
+  /// 不管有沒有每日行情都要顯示的內容（例如市場頁的長期環境）。
+  final List<Widget> header;
+  const AnalysisGate({super.key, required this.builder, this.header = const []});
 
   @override
   Widget build(BuildContext context) {
     final store = context.watch<HistoryStore>();
     final a = store.analysis;
-    final children = <Widget>[];
+    final children = <Widget>[...header];
     if (store.tradingDates.isEmpty) {
       children.addAll([const _Intro(), const SizedBox(height: 8), const SyncStatusCard()]);
     } else if (a == null || (a.latestDate == null && store.analyzing)) {
@@ -65,15 +68,12 @@ class _Intro extends StatelessWidget {
     return const Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('台股選股系統', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
+        Text('每日行情', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700)),
         SizedBox(height: 6),
         Text(
-          '依照「市場 → 產業 → 個股 → 交易計畫」的順序，每天收盤後分析全部上市櫃股票：\n'
-          '1. 市場環境：用全市場廣度算 Market Score，決定現在適不適合做多、最多放多少部位。\n'
-          '2. 產業輪動：找資金正在流入的產業。\n'
-          '3. 個股評分：趨勢、相對強度、動能、量價、突破、波動壓縮，逐項給分。\n'
-          '4. 進場訊號：突破、回檔、趨勢延續、均值回歸四種模式。\n'
-          '5. 一票否決與交易計畫：流動性、停損過寬、報酬風險比不足就不推薦；推薦的每一檔都有停損、目標和建議張數。',
+          '這一頁用的是每天的上市櫃收盤行情（短線訊號、每日市場分數、產業輪動、持股追蹤都靠它）。\n'
+          '在「組合」頁下載長期資料包後，最近一年多的每日行情會自動匯入，不用再一天一天抓；'
+          '也可以按下面的按鈕直接跟證交所、櫃買中心抓（比較慢）。',
           style: TextStyle(fontSize: 13, height: 1.5),
         ),
         SizedBox(height: 8),

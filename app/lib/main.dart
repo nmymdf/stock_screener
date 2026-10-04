@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'data/datapack_store.dart';
 import 'data/history_store.dart';
 import 'data/holdings_store.dart';
+import 'data/longterm_store.dart';
 import 'data/stock_acc_source.dart';
 import 'ui/home.dart';
 import 'ui/layout.dart';
@@ -11,10 +13,14 @@ import 'ui/widgets/app_banner.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  final store = HistoryStore(autoSync: true)..load();
+  final pack = DataPackStore();
   runApp(
     StockScreenerApp(
-      store: HistoryStore(autoSync: true)..load(),
+      store: store,
       holdings: HoldingsStore(accSource: StockAccSource())..load(),
+      pack: pack,
+      longTerm: LongTermStore(pack: pack, history: store, autoUpdate: true)..load(),
     ),
   );
 }
@@ -22,8 +28,27 @@ void main() {
 class StockScreenerApp extends StatelessWidget {
   final HistoryStore store;
   final HoldingsStore holdings;
-  StockScreenerApp({super.key, required this.store, HoldingsStore? holdings})
-    : holdings = holdings ?? (HoldingsStore()..load());
+  final DataPackStore pack;
+  final LongTermStore longTerm;
+  const StockScreenerApp._(this.store, this.holdings, this.pack, this.longTerm, {super.key});
+
+  /// 測試可以只給 [store]，其他用預設（不連網、不自動更新）。
+  factory StockScreenerApp({
+    Key? key,
+    required HistoryStore store,
+    HoldingsStore? holdings,
+    DataPackStore? pack,
+    LongTermStore? longTerm,
+  }) {
+    final p = pack ?? DataPackStore();
+    return StockScreenerApp._(
+      store,
+      holdings ?? (HoldingsStore()..load()),
+      p,
+      longTerm ?? (LongTermStore(pack: p, history: store)..load()),
+      key: key,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -31,6 +56,8 @@ class StockScreenerApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider.value(value: store),
         ChangeNotifierProvider.value(value: holdings),
+        ChangeNotifierProvider.value(value: pack),
+        ChangeNotifierProvider.value(value: longTerm),
       ],
       child: Builder(
         builder: (context) {

@@ -181,10 +181,6 @@ class _TodayCard extends StatelessWidget {
               const SizedBox(height: 6),
               Bullets([e.styleAdvice!], BulletKind.warn),
             ],
-            if (e.coneNote != null) ...[
-              const SizedBox(height: 6),
-              Bullets([e.coneNote!], BulletKind.info),
-            ],
             const SizedBox(height: 10),
             Wrap(
               spacing: 8,
@@ -468,6 +464,21 @@ class _MoneyCard extends StatelessWidget {
             note: '已扣掉預估的賣出手續費和證交稅',
           ),
         KvRow('已實現損益', moneyTxt(e.realized), color: changeColor(context, e.realized)),
+        Builder(
+          builder: (context) {
+            final div = dividendsFor(context, h);
+            if (div.isEmpty) return const SizedBox.shrink();
+            final total = div.fold(0.0, (a, d) => a + d.amount);
+            return KvRow(
+              '持有期間股利（估）',
+              '約 ${f0(total)} 元',
+              color: AppColors.up,
+              note:
+                  '除權息 ${div.length} 次：${div.reversed.take(4).map((d) => '${d.date} 每股 ${d.perShare.toStringAsFixed(2)}×${d.shares} 股').join('、')}'
+                  '${div.length > 4 ? '…' : ''}。用除權息前一天持有的股數估算（配股以市值計），未含二代健保補充保費。',
+            );
+          },
+        ),
         if (e.rNow != null && h.shares > 0)
           KvRow(
             '目前賺賠（R）',

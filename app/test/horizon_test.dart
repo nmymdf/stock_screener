@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_screener/logic/engine/analysis.dart';
-import 'package:stock_screener/logic/engine/backtest.dart';
 import 'package:stock_screener/logic/engine/horizon.dart';
 import 'package:stock_screener/logic/engine/industry_engine.dart';
 import 'package:stock_screener/logic/engine/market_engine.dart';
@@ -117,39 +116,6 @@ void main() {
       expect(s.liquid, true);
       expect(s.triggers, isNotEmpty);
     }
-  });
-
-  test('歷史統計：跟回測同一套條件，樣本太少時改用所有市場狀態', () {
-    final cal = result.calibration;
-    final bt = runBacktest(AnalysisInput(dates, series, const {}), const BacktestConfig());
-    final closed = bt.trades.where((t) => !t.openAtEnd).length;
-    final total = Strategy.values.fold(0, (a, s) => a + (cal.stats['${s.code}|*']?.n ?? 0));
-    expect(total, closed);
-    for (final st in cal.stats.values) {
-      expect(st.winRate, inInclusiveRange(0, 1));
-      for (final c in st.cone) {
-        expect(c.p25, lessThanOrEqualTo(c.p50));
-        expect(c.p50, lessThanOrEqualTo(c.p75));
-      }
-    }
-    // 回測的每筆交易都知道訊號那天的市場狀態
-    expect(bt.trades.every((t) => t.regime != null), true);
-    expect(bt.byRegime.values.fold(0, (a, s) => a + s.n), bt.trades.length);
-
-    const few = CalStat(title: 'x', n: 3, wins: 1, hitTarget: 0, hitStop: 1, avgR: 0, avgDays: 5, cone: []);
-    const many = CalStat(title: 'all', n: 40, wins: 20, hitTarget: 10, hitStop: 10, avgR: 0.3, avgDays: 8, cone: []);
-    const c = Calibration({'A|bull': few, 'A|*': many});
-    expect(c.lookup(Strategy.breakout, Regime.bull)!.title, 'all');
-    expect(many.reliable, true);
-  });
-
-  test('回測期間：只統計開始日之後的訊號', () {
-    final start = dates[200];
-    final bt = runBacktest(AnalysisInput(dates, series, const {}), BacktestConfig(startDate: start));
-    expect(bt.fromDate, start);
-    expect(bt.trades.every((t) => t.signalDate.compareTo(start) >= 0), true);
-    final all = runBacktest(AnalysisInput(dates, series, const {}), const BacktestConfig());
-    expect(bt.trades.length, lessThanOrEqualTo(all.trades.length));
   });
 
   test('比較頁的輸入：代號、名稱、混合分隔符號都認得，認不得的列出來', () {

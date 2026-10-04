@@ -5,13 +5,16 @@ library;
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
+import '../../data/longterm_store.dart';
 import '../layout.dart';
 import '../../logic/engine/market_engine.dart';
 import '../format.dart';
 import '../widgets/analysis_gate.dart';
 import '../widgets/charts.dart';
 import '../widgets/common.dart';
+import '../widgets/lt_widgets.dart';
 import '../widgets/score_widgets.dart';
 
 class MarketScreen extends StatelessWidget {
@@ -20,6 +23,10 @@ class MarketScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AnalysisGate(
+      header: const [
+        PageHeader(icon: Icons.speed, title: '市場環境', subtitle: '長期：建議股票比例（台股＋國際）；短期：用全市場廣度算的每日市場分數'),
+        _LongTermExposure(),
+      ],
       builder: (context, a) {
         final t = a.today;
         if (t == null) return [const Text('沒有資料')];
@@ -30,12 +37,7 @@ class MarketScreen extends StatelessWidget {
         String pct(double? v) => v == null ? '—' : '${(v * 100).toStringAsFixed(0)}%';
         final b = t.breadth;
         return [
-          PageHeader(
-            icon: Icons.speed,
-            title: '市場環境',
-            subtitle: '用全市場每一檔股票的廣度算 Market Score，決定現在適不適合積極做多、最多放多少部位（規格書 §2）',
-            trailing: Text('${a.latestDate}', style: Theme.of(context).textTheme.bodySmall),
-          ),
+          SectionHeader(left: '每日市場分數（短期廣度，短線分頁用）', right: a.latestDate),
           Card(
             color: regimeColor(r).withValues(alpha: .08),
             child: Padding(
@@ -211,5 +213,25 @@ class MarketScreen extends StatelessWidget {
         ];
       },
     );
+  }
+}
+
+/// 長期組合用的市場環境（每月檢視日調整股票比例），含國際指標。
+class _LongTermExposure extends StatelessWidget {
+  const _LongTermExposure();
+
+  @override
+  Widget build(BuildContext context) {
+    final lt = context.watch<LongTermStore>();
+    final r = lt.result;
+    if (r == null) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(14),
+          child: Text('下載長期資料包之後，這裡會顯示長期組合建議的股票比例，以及費半、Nasdaq、VIX、匯率、美債等國際指標。'),
+        ),
+      );
+    }
+    return ExposureCard(r.exposure, mode: lt.cfg.exposure);
   }
 }

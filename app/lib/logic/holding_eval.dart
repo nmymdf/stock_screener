@@ -17,7 +17,6 @@ import 'dart:math' as math;
 import '../data/stock_industry.dart';
 import '../models/daily_bar.dart';
 import '../models/holding.dart';
-import 'engine/backtest.dart';
 import 'engine/horizon.dart';
 import 'engine/industry_engine.dart';
 import 'engine/market_engine.dart';
@@ -234,8 +233,6 @@ class HoldingEval {
   final List<String> addOnRules;
   final HoldingSummary? summary;
   final List<DisciplineEvent> discipline;
-  final CalStat? calibration;
-  final String? coneNote; // 跟同類訊號典型走勢的比較
   final String? styleAdvice; // 持有週期跟持有方式不一致時的建議
 
   /// 在現價之下、碰到就會改變建議的價位（給持股頁「要盯的價位」只列很接近的）。
@@ -278,8 +275,6 @@ class HoldingEval {
     this.addOnRules = const [],
     this.summary,
     this.discipline = const [],
-    this.calibration,
-    this.coneNote,
     this.styleAdvice,
     this.watchLevels = const [],
   });
@@ -403,7 +398,6 @@ HoldingEval evaluateHolding(
   String? newSignal, // 今天通過否決的新訊號名稱（用來判斷可不可以加碼）
   Map<String, Regime>? regimeByDate,
   Map<String, double>? taiex,
-  CalStat? calibration,
   double drawdownLimit = 0.25, // 長期：從持有期間高點回落多少算「考慮減碼」
 }) {
   final type = securityTypeOf(h.code);
@@ -832,11 +826,6 @@ HoldingEval evaluateHolding(
       if (styleD != null && durConfirmed < styleD) {
         watch.add('持有週期降到 D$durConfirmed（${kDurationRange[durConfirmed]}），比${h.style.label}的預期短：提高停利敏感度');
       }
-      final k = j - e + 1;
-      final cp = calibration?.at(k);
-      if (cp != null && k >= 3 && k <= calibration!.cone.last.day && rDay < cp.p25) {
-        watch.add('買進第 $k 天 ${_r(rDay)}，落後同類訊號 75% 的走勢（典型 ${_r(cp.p25)} ～ ${_r(cp.p75)}）');
-      }
       final canAdd =
           !noAdd &&
           sharesDay > 0 &&
@@ -971,7 +960,6 @@ HoldingEval evaluateHolding(
   final addPlan = <AddOnLevel>[];
   final addRules = <String>[];
   String? styleAdvice;
-  String? coneNote;
   final levels = <WatchLevel>[];
   if (!pending && !h.closed && shares > 0) {
     if (longMode) {
@@ -1114,15 +1102,6 @@ HoldingEval evaluateHolding(
     } else if (styleD != null && durConfirmed > 0 && durConfirmed < styleD) {
       styleAdvice = '持有理由的時間尺度縮短到 D$durConfirmed（${kDurationRange[durConfirmed]}）：提高停利敏感度，獲利不要回吐太多。';
     }
-    final k = log.length;
-    final cp = calibration?.at(k);
-    if (cp != null && k >= 1) {
-      final pos = rNow < cp.p25 ? '落後' : (rNow > cp.p75 ? '領先' : '在典型範圍內');
-      coneNote =
-          '${k <= calibration!.cone.last.day ? '同類訊號買進第 $k 天' : '同類訊號買進第 ${cp.day} 天（統計只到這天，這筆已持有 $k 天）'}的典型走勢：'
-          '中位數 ${_r(cp.p50)}，一半落在 ${_r(cp.p25)} ～ ${_r(cp.p75)}。'
-          '這筆目前 ${_r(rNow)}，$pos。';
-    }
   }
 
   // 紀律：出場訊號 vs 你實際的處理
@@ -1264,8 +1243,6 @@ HoldingEval evaluateHolding(
     addOnRules: addRules,
     summary: summary,
     discipline: discipline,
-    calibration: calibration,
-    coneNote: coneNote,
     styleAdvice: styleAdvice,
     watchLevels: levels,
   );

@@ -1,6 +1,6 @@
-/// 「推薦」：通過所有否決、依總分排序的候選股，每一檔都寫出機會類型（短中長
-/// 交叉）、預估持有期間、推薦理由、歷史勝率和交易計畫。另外有「觀察池」
-/// （中長期好、等進場點）和「被否決」（看否決原因）。
+/// 「短線 → 訊號」：通過所有否決、依總分排序的短線候選股，每一檔都寫出機會類型（短中長
+/// 交叉）、預估持有期間、推薦理由和交易計畫。另外有「觀察池」（中長期好、等進場點）
+/// 和「被否決」（看否決原因）。短線規則扣成本後的回測不穩定，只供參考進場時機。
 library;
 
 import 'package:flutter/material.dart';
@@ -52,11 +52,12 @@ class _RecommendScreenState extends State<RecommendScreen> {
         int count(int d) => base.where((s) => s.duration.cls == d).length;
         return [
           PageHeader(
-            icon: Icons.star,
-            title: '今日推薦',
-            subtitle: '市場 → 產業 → 個股 → 交易計畫，每天收盤後分析全部上市櫃股票',
+            icon: Icons.bolt,
+            title: '短線訊號',
+            subtitle: '突破、回檔、趨勢延續、超跌反彈：每天收盤後掃描全部上市櫃股票',
             trailing: Text('資料截至 ${a.latestDate} 收盤', style: Theme.of(context).textTheme.bodySmall),
           ),
+          const _ShortNotice(),
           if (today != null) _MarketBanner(day: today),
           const SizedBox(height: 6),
           _FunnelCard(f: a.funnel),
@@ -115,9 +116,8 @@ class _RecommendScreenState extends State<RecommendScreen> {
           const SizedBox(height: 10),
           const DisclaimerCard(
             text:
-                '機械化篩選，不是投資建議。分數目前由技術面、相對強度、量價、市場和產業組成；'
-                '基本面、籌碼還沒接資料，所以長期分數只看技術面、持有期間最多估到 D3。'
-                '歷史勝率是用本機資料、跟推薦完全相同的條件回算的，過去不代表未來。',
+                '機械化篩選，不是投資建議。分數由技術面、相對強度、量價、市場和產業組成，只看短期走勢；'
+                '長期投資請看「組合」頁（加入營收、獲利、股利、法人）。',
           ),
         ];
       },
@@ -270,10 +270,6 @@ class _RecCard extends StatelessWidget {
               ],
               if (rejected) ...[const SizedBox(height: 4), Bullets(s.allVetoes.take(2).toList(), BulletKind.bad)],
               if (!rejected && s.warnings.isNotEmpty) Bullets([s.warnings.first], BulletKind.warn),
-              if (!rejected && s.calibration != null) ...[
-                const SizedBox(height: 4),
-                CalibrationView(s.calibration!, compact: true),
-              ],
               if (p != null && !rejected) ...[
                 const Divider(height: 16),
                 Wrap(
@@ -390,4 +386,31 @@ class _WatchCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 誠實的提醒：短線規則過去扣掉成本並沒有穩定賺錢。
+class _ShortNotice extends StatelessWidget {
+  const _ShortNotice();
+
+  @override
+  Widget build(BuildContext context) => Card(
+    color: const Color(0xFFC98A00).withValues(alpha: .10),
+    child: const Padding(
+      padding: EdgeInsets.all(12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, color: Color(0xFFC98A00), size: 20),
+          SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '短線規則用過去的資料回測，扣掉手續費、證交稅之後並沒有穩定賺錢，所以不再列為主要推薦。'
+              '留在這裡給喜歡短線的朋友參考，或用來挑長期股票的「進場時機」（例如避開過熱的時候買）。',
+              style: TextStyle(fontSize: 13, height: 1.45),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }

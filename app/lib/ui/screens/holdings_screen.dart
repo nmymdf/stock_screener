@@ -14,10 +14,12 @@ import '../../logic/engine/horizon.dart';
 import '../../logic/holding_eval.dart';
 import '../../models/holding.dart';
 import '../format.dart';
+import '../../core/factors.dart';
 import '../holding_helpers.dart';
 import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/horizon_widgets.dart';
+import '../widgets/lt_widgets.dart';
 import '../widgets/score_widgets.dart';
 import '../widgets/sync_status.dart';
 import 'holding_detail_screen.dart';
@@ -62,10 +64,12 @@ class _HoldingsScreenState extends State<HoldingsScreen> {
       value += e.marketValue ?? 0;
       unreal += e.unrealized ?? 0;
     }
-    bool isNormal(HoldingEval e) =>
-        e.action == DailyAction.hold || e.action == DailyAction.pending || e.action == DailyAction.addOn;
-    final attention = open.where((x) => !isNormal(x.$2)).toList();
-    final normal = open.where((x) => isNormal(x.$2)).toList();
+    // 長期評分轉弱（理由破壞、排名後 30%）也列在「需要注意」
+    bool isNormal(Holding h, HoldingEval e) =>
+        (e.action == DailyAction.hold || e.action == DailyAction.pending || e.action == DailyAction.addOn) &&
+        ltAlert(ltScoreFor(context, h.code)) == null;
+    final attention = open.where((x) => !isNormal(x.$1, x.$2)).toList();
+    final normal = open.where((x) => isNormal(x.$1, x.$2)).toList();
     final other = src == HoldingSource.manual ? HoldingSource.stockAcc : HoldingSource.manual;
     final otherUrgent = showAcc
         ? holdings.of(other).where((h) => !h.closed && evalFor(context, h).action.needsAction).length
@@ -358,6 +362,7 @@ class _HoldingCard extends StatelessWidget {
                   color: e.action == DailyAction.hold ? null : c,
                 ),
               ),
+              _LtLine(code: h.code),
               if (e.addOn != null)
                 Padding(padding: const EdgeInsets.only(top: 4), child: Bullets([e.addOn!], BulletKind.good)),
               const Divider(height: 16),
@@ -603,8 +608,8 @@ class _HoldingsTable extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    const widths = [118.0, 150.0, 80.0, 86.0, 86.0, 86.0, 110.0, 96.0, 70.0];
-    const heads = ['狀態', '股票', '股數', '成本', '現價', '損益%', '損益（元）', '離關鍵價', '健康度'];
+    const widths = [118.0, 150.0, 80.0, 86.0, 86.0, 86.0, 110.0, 96.0, 70.0, 92.0];
+    const heads = ['狀態', '股票', '股數', '成本', '現價', '損益%', '損益（元）', '離關鍵價', '健康度', '長期排名'];
     Widget cell(int i, Widget child, {bool head = false}) => Container(
       width: widths[i],
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -669,6 +674,19 @@ class _HoldingsTable extends StatelessWidget {
                         color: e.health == null ? null : healthColor(e.health!),
                       ),
                     ),
+                    cell(
+                      9,
+                      Builder(
+                        builder: (context) {
+                          final s = ltScoreFor(context, h.code);
+                          return txt(
+                            s == null ? '—' : '前 ${((1 - s.pct) * 100).clamp(1, 100).toStringAsFixed(0)}%',
+                            color: s == null ? null : (ltAlert(s) != null ? actionColor(DailyAction.caution) : null),
+                            bold: s != null && s.pct >= 0.7,
+                          );
+                        },
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -697,6 +715,41 @@ class _DisciplineRow extends StatelessWidget {
         const Text('你的紀律', style: TextStyle(fontWeight: FontWeight.w600)),
         Text(parts.join('；'), style: const TextStyle(fontSize: 13)),
       ],
+    );
+  }
+}
+
+/// 持股卡片上的長期評分：排名、旗標、提醒。
+class _LtLine extends StatelessWidget {
+  final String code;
+  const _LtLine({required this.code});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = ltScoreFor(context, code);
+    if (s == null) return const SizedBox.shrink();
+    final alert = ltAlert(s);
+    final total = ltTotal(context);
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 3,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text(
+            '長期 ${rankText(s, total)}',
+            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: pctColor(context, s.pct)),
+          ),
+          for (final f in s.flags)
+            if (f != LtFlag.illiquid) Tag(f.label, ltFlagColor(f)),
+          if (alert != null)
+            Text(
+              '⚠ $alert',
+              style: TextStyle(fontSize: 12, color: actionColor(DailyAction.caution), fontWeight: FontWeight.w700),
+            ),
+        ],
+      ),
     );
   }
 }

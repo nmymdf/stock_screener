@@ -5,9 +5,13 @@ library;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../core/factors.dart';
+import '../core/sources.dart';
 import '../data/history_store.dart';
 import '../data/holdings_store.dart';
+import '../data/longterm_store.dart';
 import '../data/stock_industry.dart';
+import '../logic/dividend_income.dart';
 import '../logic/engine/signals.dart';
 import '../logic/holding_eval.dart';
 import '../models/holding.dart';
@@ -28,9 +32,25 @@ HoldingEval evalFor(BuildContext context, Holding h) {
     newSignal: report?.primary?.hit.strategy.label,
     regimeByDate: a?.regimeByDate,
     taiex: store.taiexByDate,
-    calibration: a?.calibration.byCode(h.strategy, regime),
     drawdownLimit: context.select<HoldingsStore, double>((s) => s.drawdownLimit),
   );
+}
+
+/// 長期評分（沒有資料包、或上櫃／ETF 不在範圍是 null）。
+LtScore? ltScoreFor(BuildContext context, String code) =>
+    context.select<LongTermStore, LtScore?>((s) => s.result?.scoreOf(code));
+
+/// 有長期評分的股票總數（算「前幾 %」用）。
+int ltTotal(BuildContext context) => context.select<LongTermStore, int>((s) => s.result?.live.ranked.length ?? 0);
+
+/// 長期提醒：理由破壞或排名掉到後 30%。
+String? ltAlert(LtScore? s) => s == null ? null : (s.broken ? '長期理由破壞，考慮換掉' : (s.pct < 0.3 ? '長期總分掉到後 30%' : null));
+
+/// 持有期間估計領到的股利。
+List<DividendItem> dividendsFor(BuildContext context, Holding h) {
+  final ev = context.select<LongTermStore, List<DivEvent>?>((s) => s.result?.data.dividends.byCode[h.code]);
+  if (ev != null && ev.isNotEmpty) return dividendIncome(h, ev);
+  return dividendIncome(h, derivedDividends(context.read<HistoryStore>().rawSeriesOf(h.code)));
 }
 
 /// 預設持有方式：先看預估持有期間（D1 短線、D2／D3 波段），沒有的話看訊號類型

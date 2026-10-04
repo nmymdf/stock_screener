@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stock_screener/data/stock_industry.dart';
-import 'package:stock_screener/logic/engine/backtest.dart';
 import 'package:stock_screener/logic/engine/market_engine.dart';
 import 'package:stock_screener/logic/holding_eval.dart';
 import 'package:stock_screener/models/daily_bar.dart';
@@ -327,30 +326,6 @@ void main() {
       final up = [...base, 102.0, 104, 106, 108];
       final e2 = eval(h, barsOf(dates, up));
       expect(styleUpgradeCheck(h, HoldStyle.swing, e2), isNull);
-    });
-
-    test('同類訊號的典型走勢：落後時提醒', () {
-      final closes = [...base, 100.2, 99.9, 100.1, 99.8, 100.0];
-      final h = holding(dates[39], 100, HoldStyle.swing);
-      const cal = CalStat(
-        title: 'A',
-        n: 50,
-        wins: 25,
-        hitTarget: 10,
-        hitStop: 10,
-        avgR: 0.3,
-        avgDays: 8,
-        cone: [
-          ConePoint(1, 0.1, 0.3, 0.6),
-          ConePoint(3, 0.3, 0.6, 1.0),
-          ConePoint(5, 0.5, 0.9, 1.4),
-          ConePoint(20, 1, 1.5, 2.5),
-        ],
-      );
-      final r = evaluateHolding(h, adjusted: barsOf(dates, closes), raw: barsOf(dates, closes), calibration: cal);
-      expect(r.coneNote, contains('落後'));
-      expect(r.state, HoldState.watch);
-      expect([r.headline, ...r.reasons].join(), contains('落後同類訊號'));
     });
   });
 

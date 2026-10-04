@@ -45,6 +45,15 @@ class LtStock {
     return k >= 0 && k < tr.length && !tr[k].isNaN;
   }
 
+  /// 第 t 天（含）以前最後一次成交的日子；之前都沒成交回傳 -1。
+  int lastTradedBy(int t) {
+    var k = math.min(t - start, tr.length - 1);
+    for (; k >= 0; k--) {
+      if (!tr[k].isNaN) return start + k;
+    }
+    return -1;
+  }
+
   /// 最後一個有成交的交易日。
   int get lastTraded {
     for (var k = tr.length - 1; k >= 0; k--) {
@@ -274,9 +283,11 @@ class LtDataBuilder {
   }
 
   /// 完整的一天（資料包的最近 30 天、或 App 當天直接抓的收盤）。
-  void addDay(PackDay d, {Map<String, String>? dayNames}) {
+  /// [knownOnly]：只收已經有的股票（App 自己抓的行情上市上櫃混在一起，不能讓上櫃股票混進來）。
+  void addDay(PackDay d, {Map<String, String>? dayNames, bool knownOnly = false}) {
     if (!_begin(d.date, d.taiex, d.tri)) return;
     for (final e in d.twse.entries) {
+      if (knownOnly && !_st.containsKey(e.key)) continue;
       final row = e.value;
       final inst = d.inst[e.key];
       _stock(e.key, row.close, row.lots, row.change, inst?[0] ?? 0, (inst?.length ?? 0) > 1 ? inst![1] : 0);

@@ -8,9 +8,9 @@ import 'dart:isolate';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 
+import '../core/pack.dart';
 import '../logic/adjust.dart';
 import '../logic/engine/analysis.dart';
-import '../logic/engine/backtest.dart';
 import '../logic/technical_screen.dart';
 import '../models/daily_bar.dart';
 import '../services/history_service.dart';
@@ -102,27 +102,6 @@ class HistoryStore extends ChangeNotifier {
   String? analysisError;
   int _dataVersion = 0;
   int _analyzedVersion = -1;
-
-  BacktestResult? backtest;
-  bool backtesting = false;
-  String? backtestError;
-
-  /// 用本機所有資料跑一次回測（背景 isolate）。
-  Future<void> runBacktest(BacktestConfig cfg) async {
-    if (backtesting || tradingDates.isEmpty) return;
-    backtesting = true;
-    backtestError = null;
-    notifyListeners();
-    try {
-      final input = AnalysisInput(tradingDates, seriesByCode, taiexByDate);
-      backtest = useIsolate ? await _backtestInBackground(input, cfg) : runBacktestSync(input, cfg);
-    } catch (e) {
-      backtestError = '回測失敗：$e';
-    } finally {
-      backtesting = false;
-      notifyListeners();
-    }
-  }
 
   Future<void> load() async {
     try {
@@ -326,6 +305,37 @@ class HistoryStore extends ChangeNotifier {
 
   void cancelSync() => _cancel = true;
 
+  /// 從資料包匯入每日行情：只補回看天數以內、本機還沒有的日子。回傳匯入幾天。
+  Future<int> importSnapshots(List<DaySnapshot> days, {DateTime? now}) async {
+    final keep = candidateDates(now ?? taipeiNow(), lookbackDays).toSet();
+    var n = 0;
+    for (final s in days) {
+      if (!keep.contains(s.date)) continue;
+      final have = _days[s.date];
+      if (have != null && (have.trading || !s.trading)) continue;
+      _days[s.date] = s;
+      await _store.writeDay(s.date, s.toJson());
+      n++;
+    }
+    if (n > 0) {
+      _dataChanged();
+      notifyListeners();
+      await refreshAnalysis();
+    }
+    return n;
+  }
+
+  /// 資料包最後一天之後、App 自己抓到的日子（例如今天 15:00 以後的收盤），給長期分析接在最後面。
+  List<PackDay> packDaysAfter(String? date) => [
+    for (final d in tradingDates)
+      if (date == null || d.compareTo(date) > 0)
+        PackDay(
+          date: d,
+          taiex: _days[d]!.taiex,
+          twse: {for (final e in _days[d]!.bars.entries) e.key: barRow(e.value)},
+        ),
+  ];
+
   /// 刪掉超出回看天數的舊資料，不讓本機檔案一直長大。
   Future<void> _prune() async {
     final keep = candidateDates(taipeiNow(), lookbackDays).toSet();
@@ -352,8 +362,3 @@ class HistoryStore extends ChangeNotifier {
 
 /// 放在最上層，確保丟進 isolate 的閉包只帶著 [input]，不會把整個 store 一起複製過去。
 Future<AnalysisResult> _analyzeInBackground(AnalysisInput input) => Isolate.run(() => runAnalysis(input));
-
-Future<BacktestResult> _backtestInBackground(AnalysisInput input, BacktestConfig cfg) =>
-    Isolate.run(() => runBacktestSync(input, cfg));
-
-BacktestResult runBacktestSync(AnalysisInput input, BacktestConfig cfg) => runBacktest(input, cfg);

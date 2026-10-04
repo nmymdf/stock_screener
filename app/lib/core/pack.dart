@@ -401,6 +401,7 @@ Map<String, dynamic> ltYearJson(PackYear raw) {
 Map<String, dynamic> barsYearJson(PackYear raw) => {
   'v': 1,
   'year': raw.year,
+  'closed': raw.closed.toList()..sort(),
   'days': [
     for (final d in raw.sortedDays)
       if (d.snapshot() case final snap?) snap.toJson(),

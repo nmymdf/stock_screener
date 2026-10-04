@@ -6,13 +6,11 @@
 library;
 
 import 'dart:math' as math;
-import 'dart:typed_data';
 
 import '../../data/stock_catalog.dart';
 import '../../data/stock_industry.dart';
 import '../../models/daily_bar.dart';
 import '../ta.dart';
-import 'backtest.dart';
 import 'horizon.dart';
 import 'industry_engine.dart';
 import 'market_engine.dart';
@@ -61,7 +59,6 @@ class StockReport {
   final Opportunity opportunity;
   final DurationEstimate duration;
   final List<String> triggers; // 還沒訊號時，什麼情況會變成可以買
-  final CalStat? calibration; // 同類訊號的歷史統計
 
   const StockReport({
     required this.code,
@@ -90,7 +87,6 @@ class StockReport {
     required this.opportunity,
     required this.duration,
     required this.triggers,
-    this.calibration,
   });
 
   HitResult? get primary {
@@ -124,7 +120,6 @@ class AnalysisResult {
   final List<IndustryReport> industries;
   final List<StockReport> stocks; // 今天有交易的全部股票
   final Funnel funnel;
-  final Calibration calibration;
 
   const AnalysisResult({
     required this.latestDate,
@@ -133,7 +128,6 @@ class AnalysisResult {
     required this.industries,
     required this.stocks,
     required this.funnel,
-    this.calibration = Calibration.empty,
   });
 
   static const empty = AnalysisResult(
@@ -304,19 +298,12 @@ AnalysisResult runAnalysis(AnalysisInput input) {
   final latest = input.dates.last;
   final partials = <_Partial>[];
   final rsw = rsWindowsOf(input.series, latest);
-  final candidates = <String, List<BtCandidate>>{};
-  final rsRawByDay = <String, Float32List>{};
-  final nd = input.dates.length;
   final indNow = <String, (String, IndustryInput)>{};
   final indPrev = <String, (String, IndustryInput)>{};
 
   final market = computeMarket(
     input,
     onSeries: (s, idx) {
-      // 歷史上每一次訊號的結果（給「同類訊號的歷史統計」用）
-      final type0 = securityTypeOf(s.code);
-      rsRawByDay[s.code] = rsRawSeries(s, idx, nd);
-      if (s.length >= kBtWarmup + 5) candidates[s.code] = btCandidates(s, idx, const BacktestConfig(), type0);
       if (s.bars.last.date != latest) return; // 今天沒交易（停牌、下市）
       final i = s.length - 1;
       final code = s.code;
@@ -368,7 +355,6 @@ AnalysisResult runAnalysis(AnalysisInput input) {
       );
     },
   );
-  final calibration = buildCalibration(candidates, rsRawByDay, market, nd);
 
   final today = market.last;
   final regime = today.regime;
@@ -459,12 +445,7 @@ AnalysisResult runAnalysis(AnalysisInput input) {
       marketScore: today.score,
       regime: regime,
     );
-    final cal = primaryHit == null ? null : calibration.lookup(primaryHit.hit.strategy, regime);
-
     final warnings = [...p.warnings];
-    if (cal != null && cal.reliable == false) {
-      warnings.add('歷史上「${cal.title}」的訊號平均是虧損的（${cal.n} 次、平均 ${cal.avgR.toStringAsFixed(2)}R），這類訊號要更保守');
-    }
     if (pv.state.bad) warnings.add('量價「${pv.state.label}」：${pv.detail}');
     if (ind != null && (ind.cls == IndustryClass.weakening || ind.cls == IndustryClass.lagging)) {
       warnings.add('所屬「$industry」產業目前${ind.cls.label}（產業分數 ${ind.score.toStringAsFixed(0)}）');
@@ -501,7 +482,6 @@ AnalysisResult runAnalysis(AnalysisInput input) {
         opportunity: opportunity,
         duration: duration,
         triggers: p.triggers,
-        calibration: cal,
       ),
     );
   }
@@ -513,7 +493,6 @@ AnalysisResult runAnalysis(AnalysisInput input) {
     industries: industries,
     stocks: stocks,
     funnel: Funnel(stocks.length, liquid, withSignal, rec),
-    calibration: calibration,
   );
 }
 

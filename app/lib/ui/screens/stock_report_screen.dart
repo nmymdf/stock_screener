@@ -25,6 +25,7 @@ import '../widgets/charts.dart';
 import '../widgets/common.dart';
 import '../widgets/horizon_widgets.dart';
 import '../widgets/score_widgets.dart';
+import '../widgets/lt_stock_cards.dart';
 import 'holding_detail_screen.dart';
 import 'holding_forms.dart';
 
@@ -49,6 +50,8 @@ class StockReportScreen extends StatelessWidget {
     final left = <Widget>[
       if (extraReasons.isNotEmpty)
         SectionCard(title: extraTitle ?? '上榜理由', child: Bullets(extraReasons, BulletKind.good)),
+      ...ltLeftCards(context, code),
+      if (report != null) const _ShortHeader(),
       if (report != null) ...[
         _Header(r: report),
         _HoldingAction(code: code, report: report),
@@ -57,17 +60,12 @@ class StockReportScreen extends StatelessWidget {
         _Reasons(r: report),
         for (final h in report.hits) _PlanCard(r: report, h: h, primary: identical(h, report.primary)),
       ] else
-        const SectionCard(
-          child: Text(
-            '這檔股票今天不在分析範圍（今天沒有交易，或本機還沒有它的歷史資料）。'
-            '到「工具 → 資料管理」補抓資料後就會有完整分析。',
-          ),
-        ),
+        const SectionCard(child: Text('這檔股票今天不在短線分析範圍（今天沒有交易，或本機還沒有它的每日行情）。')),
     ];
     final right = <Widget>[
+      ...ltRightCards(context, code),
       if (series != null) _ChartCard(s: series, plan: plan),
       if (report != null) ...[
-        if (report.calibration != null) SectionCard(title: '歷史上同類訊號的結果', child: CalibrationView(report.calibration!)),
         if (!report.recommended && report.triggers.isNotEmpty)
           SectionCard(
             title: '什麼情況會變成可以買',
@@ -115,7 +113,7 @@ class StockReportScreen extends StatelessWidget {
             children: [
               SplitView(left: left, right: right),
               const SizedBox(height: 8),
-              const DisclaimerCard(text: '機械化分析，不是投資建議。交易計畫是依規則算出來的參考值，實際下單前請自己再確認。'),
+              const DisclaimerCard(text: '依公開資料、固定規則算出來的參考，不是投資建議。短線交易計畫只是參考值，實際買賣前請自己再確認。'),
             ],
           ),
         ),
@@ -593,4 +591,26 @@ class _PvCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 長期和短線的分隔：下面是短線的訊號與交易計畫，只供參考進場時機。
+class _ShortHeader extends StatelessWidget {
+  const _ShortHeader();
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.fromLTRB(4, 14, 4, 4),
+    child: Row(
+      children: [
+        Icon(Icons.bolt, size: 18, color: Theme.of(context).colorScheme.onSurfaceVariant),
+        const SizedBox(width: 4),
+        Expanded(
+          child: Text(
+            '短線參考（技術面，僅供參考進場時機）',
+            style: TextStyle(fontWeight: FontWeight.w800, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ),
+        ),
+      ],
+    ),
+  );
 }
