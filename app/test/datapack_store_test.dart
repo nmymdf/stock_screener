@@ -141,6 +141,57 @@ void main() {
     expect(store.updating, isFalse);
   });
 
+  test('GitHub 偶爾回 500：自動重試；一直失敗就保留已下載的檔案，下次只補沒下載的', () async {
+    final rel = FakeRelease();
+    // 跟真的清單一樣，今年的排第一個
+    rel.put('lt-2026.json.gz', {'v': 1, 'dates': [], 'ix': [], 'tr': [], 's': {}});
+    rel.put('lt-2025.json.gz', {'v': 1, 'dates': [], 'ix': [], 'tr': [], 's': {}});
+    final ok = rel.client(() => rel.manifest());
+    Future<http.Response> pass(http.Request req) async =>
+        http.Response.fromStream(await ok.send(http.Request('GET', req.url)));
+    var fails = <String, int>{'lt-2026.json.gz': 2};
+    final flaky = MockClient((req) async {
+      final name = req.url.pathSegments.last;
+      final left = fails[name] ?? 0;
+      if (left > 0) {
+        fails[name] = left - 1;
+        return http.Response('oops', 500);
+      }
+      return pass(req);
+    });
+    final store = DataPackStore(
+      dir: tmp,
+      client: flaky,
+      base: 'https://x/data',
+      retryDelays: const [Duration.zero, Duration.zero],
+    );
+    await store.load();
+    // 失敗兩次，第三次成功
+    expect(await store.update(), isTrue);
+    expect(store.error, isNull);
+    expect(store.local.keys, containsAll(['lt-2025.json.gz', 'lt-2026.json.gz']));
+
+    // 一直失敗：顯示好懂的原因，成功的檔案留著
+    store.local.clear();
+    for (final f in tmp.listSync()) {
+      f.deleteSync();
+    }
+    fails = {'lt-2025.json.gz': 99};
+    rel.requested.clear();
+    expect(await store.update(), isTrue);
+    expect(store.error, contains('GitHub 暫時出錯'));
+    expect(store.error, contains('lt-2025.json.gz'));
+    expect(store.local.keys, ['lt-2026.json.gz']);
+    expect(File('${tmp.path}/lt-2025.json.gz').existsSync(), isFalse);
+
+    // 再按一次：只補沒下載的
+    fails = {};
+    rel.requested.clear();
+    await store.update();
+    expect(store.error, isNull);
+    expect(rel.requested.where((n) => n != 'manifest.json').toList(), ['lt-2025.json.gz']);
+  });
+
   test('每日行情匯入：bars 檔的交易日、休市日，加上最近 30 天，只補回看天數內本機沒有的', () async {
     final raw = PackYear(2026, closed: {'2026-09-28'});
     for (final (d, c) in [('2026-09-24', 880.0), ('2026-09-25', 890.0), ('2026-09-29', 895.0)]) {

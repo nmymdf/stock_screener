@@ -33,7 +33,7 @@ Future<StockScreenerApp> appIn(
 }) async {
   final h = holdings ?? await holdingsIn(tester, dir);
   final pd = packDir ?? Directory('${dir.path}/datapack');
-  final pack = DataPackStore(dir: pd, base: 'http://127.0.0.1:9/none');
+  final pack = DataPackStore(dir: pd, base: 'http://127.0.0.1:9/none', retryDelays: const []);
   final lt = LongTermStore(
     pack: pack,
     history: store,

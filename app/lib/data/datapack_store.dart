@@ -5,6 +5,7 @@
 /// 下載的只有公開的市場資料；持股、stock_acc 的資料不會上傳到任何地方。
 library;
 
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -24,9 +25,16 @@ class DataPackStore extends ChangeNotifier {
   final http.Client _client;
   final Directory? _dirOverride;
 
-  DataPackStore({http.Client? client, Directory? dir, this.base = defaultBase})
-    : _client = client ?? http.Client(),
-      _dirOverride = dir;
+  /// GitHub 偶爾會回 500／502／503 或斷線，等一下再試通常就好；這是每次重試前等多久。
+  final List<Duration> retryDelays;
+
+  DataPackStore({
+    http.Client? client,
+    Directory? dir,
+    this.base = defaultBase,
+    this.retryDelays = const [Duration(seconds: 2), Duration(seconds: 5), Duration(seconds: 12)],
+  }) : _client = client ?? http.Client(),
+       _dirOverride = dir;
 
   String? dirPath;
   Map<String, PackFileInfo> local = {};
@@ -99,13 +107,15 @@ class DataPackStore extends ChangeNotifier {
     notifyListeners();
     var changed = false;
     try {
-      final res = await _client
-          .get(Uri.parse('$base/manifest.json?t=${DateTime.now().millisecondsSinceEpoch ~/ 60000}'))
-          .timeout(const Duration(seconds: 30));
-      if (res.statusCode != 200) {
-        throw HttpException(res.statusCode == 404 ? '資料包還沒準備好（GitHub 上還沒有 data）' : '下載清單失敗（HTTP ${res.statusCode}）');
-      }
-      final remote = PackManifest.fromJson(jsonDecode(utf8.decode(res.bodyBytes)) as Map<String, dynamic>);
+      final body = await _retry('清單', (attempt) async {
+        final res = await _client
+            .get(Uri.parse('$base/manifest.json?t=${DateTime.now().millisecondsSinceEpoch ~/ 60000}&r=$attempt'))
+            .timeout(const Duration(seconds: 30));
+        if (res.statusCode == 404) throw const HttpException('資料包還沒準備好（GitHub 上還沒有 data）');
+        if (res.statusCode != 200) throw _HttpStatus('清單', res.statusCode);
+        return res.bodyBytes;
+      });
+      final remote = PackManifest.fromJson(jsonDecode(utf8.decode(body)) as Map<String, dynamic>);
       final recentFirst = remote.files['recent.json.gz']?.first;
       final t = now ?? DateTime.now();
       final oldestBarsYear = t.subtract(Duration(days: lookbackDays)).year;
@@ -147,7 +157,16 @@ class DataPackStore extends ChangeNotifier {
       await _saveState();
       if (changed) version++;
     } catch (e) {
-      error = e is HttpException ? e.message : '更新資料包失敗：$e';
+      error = switch (e) {
+        _HttpStatus(:final what, :final code) when code >= 500 =>
+          'GitHub 暫時出錯，下載$what失敗（HTTP $code，已自動重試 ${retryDelays.length} 次）。請過幾分鐘再按一次；已經下載好的檔案會保留，不用從頭來。',
+        _HttpStatus(:final what, :final code) => '下載$what失敗（HTTP $code）',
+        HttpException(:final message) => message,
+        SocketException() ||
+        TimeoutException() ||
+        http.ClientException() => '連不上 GitHub（已自動重試 ${retryDelays.length} 次）。請確認網路後再按一次；已經下載好的檔案會保留。',
+        _ => '更新資料包失敗：$e',
+      };
     } finally {
       updating = false;
       notifyListeners();
@@ -155,25 +174,50 @@ class DataPackStore extends ChangeNotifier {
     return changed;
   }
 
-  Future<void> _download(PackFileInfo info, Directory d) async {
-    final req = http.Request('GET', Uri.parse('$base/${info.name}'));
-    final res = await _client.send(req).timeout(const Duration(seconds: 60));
-    if (res.statusCode != 200) throw HttpException('下載 ${info.name} 失敗（HTTP ${res.statusCode}）');
-    final tmp = File('${d.path}/${info.name}.part');
-    final sink = tmp.openWrite();
-    var lastNotify = DateTime.now();
-    try {
-      await for (final chunk in res.stream.timeout(const Duration(seconds: 60))) {
-        sink.add(chunk);
-        doneBytes += chunk.length;
-        if (DateTime.now().difference(lastNotify).inMilliseconds > 200) {
-          lastNotify = DateTime.now();
-          notifyListeners();
-        }
+  /// 遇到伺服器錯誤（5xx、429）或斷線就等一下再試，最多重試 [retryDelays] 那麼多次。
+  Future<T> _retry<T>(String what, Future<T> Function(int attempt) run) async {
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await run(attempt);
+      } catch (e) {
+        final transient = switch (e) {
+          _HttpStatus(:final code) => code >= 500 || code == 429 || code == 408,
+          SocketException() || TimeoutException() || http.ClientException() || HandshakeException() => true,
+          _ => false,
+        };
+        if (!transient || attempt >= retryDelays.length) rethrow;
+        await Future<void>.delayed(retryDelays[attempt]);
       }
-    } finally {
-      await sink.close();
     }
+  }
+
+  Future<void> _download(PackFileInfo info, Directory d) async {
+    final tmp = File('${d.path}/${info.name}.part');
+    final startBytes = doneBytes;
+    await _retry(' ${info.name} ', (attempt) async {
+      doneBytes = startBytes;
+      // 重試時加個參數，避免中間的快取把錯誤的回應再送一次
+      final req = http.Request('GET', Uri.parse(attempt == 0 ? '$base/${info.name}' : '$base/${info.name}?r=$attempt'));
+      final res = await _client.send(req).timeout(const Duration(seconds: 60));
+      if (res.statusCode != 200) {
+        await res.stream.drain<void>().catchError((_) {});
+        throw _HttpStatus(' ${info.name} ', res.statusCode);
+      }
+      final sink = tmp.openWrite();
+      var lastNotify = DateTime.now();
+      try {
+        await for (final chunk in res.stream.timeout(const Duration(seconds: 60))) {
+          sink.add(chunk);
+          doneBytes += chunk.length;
+          if (DateTime.now().difference(lastNotify).inMilliseconds > 200) {
+            lastNotify = DateTime.now();
+            notifyListeners();
+          }
+        }
+      } finally {
+        await sink.close();
+      }
+    });
     await tmp.rename('${d.path}/${info.name}');
   }
 
@@ -197,6 +241,14 @@ class DataPackStore extends ChangeNotifier {
     version++;
     notifyListeners();
   }
+}
+
+class _HttpStatus implements Exception {
+  final String what;
+  final int code;
+  const _HttpStatus(this.what, this.code);
+  @override
+  String toString() => '下載$what失敗（HTTP $code）';
 }
 
 /// 在背景 isolate 讀 bars／recent，轉成每日行情。
