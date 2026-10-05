@@ -208,6 +208,9 @@ class _Settings extends StatelessWidget {
           dd('股票比例', lt.cfg.exposure, [
             for (final m in ExposureMode.values) (m, m.label),
           ], (v) => lt.setConfig(exposure: v)),
+          dd('大盤核心 ETF', lt.cfg.coreWeight, [
+            for (final w in const [0.0, 0.3, 0.5]) (w, w == 0 ? '不放' : '${(w * 100).round()}%'),
+          ], (v) => lt.setConfig(coreWeight: v)),
         ],
       ),
     );
@@ -260,6 +263,14 @@ class _Verdict extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 8),
+            if (r.sim.cfg.coreWeight > 0)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Text(
+                  '（大盤核心 ${pc(r.sim.cfg.coreWeight)} 放 0050／006208、其餘選股，每月調回比例）',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
             Text(
               '照這套規則，${s.from.substring(0, 4)} 年投入 100 萬，到現在約 ${(money / 10000).toStringAsFixed(0)} 萬'
               '（年化 ${sp(s.cagr)}）；同期 $bench 約 ${(benchMoney / 10000).toStringAsFixed(0)} 萬（年化 ${sp(s.benchCagr)}）。\n'

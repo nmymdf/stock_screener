@@ -31,8 +31,31 @@ class LtConfig {
   final double buyCost, sellCost;
   final String startDate;
 
+  /// 短期過熱的不買。
+  final bool skipOverheat;
+
+  /// 等權（否則分數 ÷ 波動度）。
+  final bool equalWeight;
+
+  /// 新買進的最低流動性：近 60 日平均每天成交值（百萬元）。
+  final double minValue;
+
+  /// 大盤核心比例：這部分放市值型 ETF（0050／006208），用加權報酬指數扣 0.3% 年費模擬；
+  /// 其餘才是選股。每月檢視日調回目標比例。
+  final double coreWeight;
+
+  /// 只從成交值最大的 N 檔裡挑（0 = 不限）；這時「新買」改成這 N 檔裡總分前 [universeBuyFrac]。
+  final int universeTop;
+  final double universeBuyFrac;
+
   const LtConfig({
-    this.size = 12,
+    this.coreWeight = 0,
+    this.universeTop = 0,
+    this.universeBuyFrac = 0.2,
+    this.skipOverheat = true,
+    this.equalWeight = false,
+    this.minValue = 50,
+    this.size = 15,
     this.maxWeight = 0.15,
     this.maxIndustry = 0.30,
     this.maxChanges = 5,
@@ -45,18 +68,39 @@ class LtConfig {
     this.startDate = '2014-01-01',
   });
 
-  LtConfig copyWith({int? size, int? maxChanges, ExposureMode? exposure, String? startDate}) => LtConfig(
+  LtConfig copyWith({
+    int? size,
+    int? maxChanges,
+    ExposureMode? exposure,
+    String? startDate,
+    double? buyPct,
+    double? holdPct,
+    int? minHoldDays,
+    bool? skipOverheat,
+    bool? equalWeight,
+    double? minValue,
+    double? maxWeight,
+    int? universeTop,
+    double? universeBuyFrac,
+    double? coreWeight,
+  }) => LtConfig(
+    coreWeight: coreWeight ?? this.coreWeight,
+    universeTop: universeTop ?? this.universeTop,
+    universeBuyFrac: universeBuyFrac ?? this.universeBuyFrac,
     size: size ?? this.size,
-    maxWeight: maxWeight,
+    maxWeight: maxWeight ?? this.maxWeight,
     maxIndustry: maxIndustry,
     maxChanges: maxChanges ?? this.maxChanges,
-    buyPct: buyPct,
-    holdPct: holdPct,
-    minHoldDays: minHoldDays,
+    buyPct: buyPct ?? this.buyPct,
+    holdPct: holdPct ?? this.holdPct,
+    minHoldDays: minHoldDays ?? this.minHoldDays,
     exposure: exposure ?? this.exposure,
     buyCost: buyCost,
     sellCost: sellCost,
     startDate: startDate ?? this.startDate,
+    skipOverheat: skipOverheat ?? this.skipOverheat,
+    equalWeight: equalWeight ?? this.equalWeight,
+    minValue: minValue ?? this.minValue,
   );
 
   /// 單一產業最多幾檔（檔數上限，權重另外再限制）。
@@ -345,13 +389,22 @@ class PortfolioSim {
       addInd(w.si, 1);
     }
     final taken = <int>{...held.keys};
-    // 依名次往下看，到不在前 10% 就停（不用看完全部）
+    // 依名次往下看，到不在前 10%（或大型股範圍的前 20%）就停（不用看完全部）
     final candidates = <LtScore>[];
+    final uni = cfg.universeTop > 0 ? sc.topLiquid(cfg.universeTop) : null;
+    final uniLimit = uni == null ? 0 : (uni.length * cfg.universeBuyFrac).ceil();
+    var uniSeen = 0;
     for (final c in sc.rankedIter) {
-      if (c.pct < cfg.buyPct) break;
+      if (uni != null) {
+        if (!uni.contains(c.si)) continue;
+        if (++uniSeen > uniLimit) break;
+      } else if (c.pct < cfg.buyPct) {
+        break;
+      }
       if (c.investable &&
+          (c.raw.val60.isNaN || c.raw.val60 >= cfg.minValue) &&
           !c.broken &&
-          !c.flags.contains(LtFlag.overheat) &&
+          !(cfg.skipOverheat && c.flags.contains(LtFlag.overheat)) &&
           !c.flags.contains(LtFlag.loss) &&
           !taken.contains(c.si)) {
         candidates.add(c);
@@ -399,7 +452,9 @@ class PortfolioSim {
     final picks = <int, (double, double, String)>{};
     for (final si in finalSet) {
       final x = sc.of(si);
-      picks[si] = (x?.composite ?? 50, x?.raw.vol ?? double.nan, industryKey(data.stocks[si].code));
+      picks[si] = cfg.equalWeight
+          ? (50, 0.3, industryKey(data.stocks[si].code))
+          : (x?.composite ?? 50, x?.raw.vol ?? double.nan, industryKey(data.stocks[si].code));
     }
     return LtDecision(t, sells, buys, targetWeights(picks, cfg), exp);
   }
@@ -412,6 +467,7 @@ class PortfolioSim {
   }
 
   double _turnoverValue = 0;
+  final List<double> _blend = [];
   final List<LtEpisode> _episodes = [];
   final List<double> _exposures = [];
 
@@ -570,6 +626,28 @@ class PortfolioSim {
     final open = pending; // 今天就是檢視日：已經決定、明天才成交
     for (final si in _pos.keys.toList()) {
       _closeEpisode(si, endT, open: true);
+    }
+    // 大盤核心：選股部位和大盤每月檢視日調回目標比例
+    if (cfg.coreWeight > 0) {
+      final w = cfg.coreWeight;
+      final execs = {for (final r in rebalances) data.dateIndex(r.execDate)};
+      var core = w, sat = 1 - w;
+      for (var k = 1; k < n; k++) {
+        final t = startT + k;
+        final rb = bench[k].isNaN || bench[k - 1].isNaN ? 0.0 : bench[k] / bench[k - 1] - 1;
+        core *= 1 + rb - 0.003 / 250;
+        sat *= nav[k - 1] > 0 ? nav[k] / nav[k - 1] : 1;
+        final total = core + sat;
+        if (execs.contains(t)) {
+          core = total * w;
+          sat = total * (1 - w);
+        }
+        _blend.add(total); // 迴圈還要用原本的選股淨值，最後才覆寫
+      }
+      for (var k = 1; k < n; k++) {
+        nav[k] = _blend[k - 1];
+      }
+      nav[0] = 1;
     }
     final navEnd = _value(endT);
     final holdings = <int, (double, String)>{

@@ -58,6 +58,7 @@ class LongTermStore extends ChangeNotifier {
           size: (j['size'] as num?)?.toInt(),
           maxChanges: (j['maxChanges'] as num?)?.toInt(),
           exposure: ExposureMode.values.where((m) => m.name == j['exposure']).firstOrNull,
+          coreWeight: (j['coreWeight'] as num?)?.toDouble(),
         );
         maxSwaps = (j['maxSwaps'] as num?)?.toInt() ?? maxSwaps;
         capital = (j['capital'] as num?)?.toDouble();
@@ -91,6 +92,7 @@ class LongTermStore extends ChangeNotifier {
     'size': cfg.size,
     'maxChanges': cfg.maxChanges,
     'exposure': cfg.exposure.name,
+    'coreWeight': cfg.coreWeight,
     'maxSwaps': maxSwaps,
     'capital': ?capital,
   });
@@ -146,8 +148,8 @@ class LongTermStore extends ChangeNotifier {
     if (pack.version != _doneVersion || _extraKey() != _doneExtra) await refresh();
   }
 
-  Future<void> setConfig({int? size, int? maxChanges, ExposureMode? exposure}) async {
-    cfg = cfg.copyWith(size: size, maxChanges: maxChanges, exposure: exposure);
+  Future<void> setConfig({int? size, int? maxChanges, ExposureMode? exposure, double? coreWeight}) async {
+    cfg = cfg.copyWith(size: size, maxChanges: maxChanges, exposure: exposure, coreWeight: coreWeight);
     notifyListeners();
     await _save();
     _doneVersion = -1;

@@ -140,8 +140,16 @@ LtResult runLtAnalysis(LtData data, {LtConfig cfg = const LtConfig(), bool varia
       ('10 檔', cfg.copyWith(size: 10)),
       ('15 檔', cfg.copyWith(size: 15)),
       ('每月最多換 3 檔', cfg.copyWith(maxChanges: 3)),
+      ('全部選股（沒有大盤核心）', cfg.copyWith(coreWeight: 0)),
+      ('大盤核心 30%＋選股 70%', cfg.copyWith(coreWeight: 0.3)),
+      ('大盤核心 50%＋選股 50%', cfg.copyWith(coreWeight: 0.5)),
     ]) {
-      if (c.exposure == cfg.exposure && c.size == cfg.size && c.maxChanges == cfg.maxChanges) continue;
+      if (c.exposure == cfg.exposure &&
+          c.size == cfg.size &&
+          c.maxChanges == cfg.maxChanges &&
+          c.coreWeight == cfg.coreWeight) {
+        continue;
+      }
       try {
         out.add(LtVariant(label, c, PortfolioSim(data, book, exposure, c).run().stats));
       } catch (_) {}

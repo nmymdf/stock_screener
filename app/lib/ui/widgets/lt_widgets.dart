@@ -79,7 +79,7 @@ List<String> ltHighlights(LtScore s) {
   final r = s.raw;
   final out = <String>[];
   if (r.revNewHigh) out.add('營收創新高');
-  if (!r.revYoy3.isNaN && r.revYoy3 >= 0.15) out.add('營收近3月${sp(r.revYoy3, 0)}');
+  if (!r.revYoy3.isNaN && r.revYoy3 >= 0.15) out.add(r.revYoy3 > 3 ? '營收近3月>300%' : '營收近3月${sp(r.revYoy3, 0)}');
   if (!r.roe.isNaN && r.roe >= 0.15) out.add('ROE ${pc(r.roe)}');
   if (!r.yld.isNaN && r.yld >= 4 && !s.flags.contains(LtFlag.yieldTrap)) out.add('殖利率 ${r.yld.toStringAsFixed(1)}%');
   if (!r.pePct.isNaN && r.pePct <= 0.3) out.add('本益比在5年低檔');

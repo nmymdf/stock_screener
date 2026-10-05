@@ -109,7 +109,17 @@ class LtScore {
       for (final f in LtFlag.values)
         if (b.flags[j] & (1 << f.index) != 0) f,
     };
-    return LtScore(si, code, LtRaw()..vol = b.vol[j], groups, b.composite[j], flags, !flags.contains(LtFlag.illiquid))
+    return LtScore(
+        si,
+        code,
+        LtRaw()
+          ..vol = b.vol[j]
+          ..val60 = b.val60[j],
+        groups,
+        b.composite[j],
+        flags,
+        !flags.contains(LtFlag.illiquid),
+      )
       ..pct = b.pct[j]
       ..rank = b.rank[j];
   }
@@ -132,6 +142,14 @@ abstract class ScoreSource {
 
   /// 依總分由高到低（可以只看前面幾檔就停）。
   Iterable<LtScore> get rankedIter;
+
+  /// 成交值最大的 [n] 檔（大型股範圍）。
+  Set<int> topLiquid(int n);
+}
+
+Set<int> _topBy(List<(int, double)> xs, int n) {
+  xs.sort((a, b) => b.$2.compareTo(a.$2));
+  return {for (final x in xs.take(n)) x.$1};
 }
 
 /// 一個檢視日的全市場評分。
@@ -155,6 +173,12 @@ class SampleScores implements ScoreSource {
   String get date => sample.date;
   @override
   Iterable<LtScore> get rankedIter => ranked;
+
+  @override
+  Set<int> topLiquid(int n) => _topBy([
+    for (final x in ranked)
+      if (!x.raw.val60.isNaN) (x.si, x.raw.val60),
+  ], n);
 }
 
 /// 從精簡紀錄按需要還原的評分（回測每個月只會看前面幾十檔和自己的持股，不用全部還原）。
@@ -183,6 +207,12 @@ class BookView implements ScoreSource {
     }
   }
 
+  @override
+  Set<int> topLiquid(int n) => _topBy([
+    for (final si in book.order[s])
+      if (!book.val60[book.at(s, si)].isNaN) (si, book.val60[book.at(s, si)].toDouble()),
+  ], n);
+
   /// 可以新買進的股票（不用還原成物件）。
   Iterable<int> get investable sync* {
     for (final si in book.order[s]) {
@@ -194,7 +224,7 @@ class BookView implements ScoreSource {
 /// 所有檢視日的評分，精簡存放（每檔每次幾個數字），回測、因子研究、分數走勢用。
 class ScoreBook {
   final int ns, nst;
-  final Float32List composite, pct, vol, groups;
+  final Float32List composite, pct, vol, val60, groups;
   final Int32List rank;
   final Uint8List flags;
 
@@ -206,6 +236,7 @@ class ScoreBook {
     : composite = Float32List(ns * nst)..fillRange(0, ns * nst, kNaN),
       pct = Float32List(ns * nst)..fillRange(0, ns * nst, kNaN),
       vol = Float32List(ns * nst)..fillRange(0, ns * nst, kNaN),
+      val60 = Float32List(ns * nst)..fillRange(0, ns * nst, kNaN),
       groups = Float32List(ns * nst * 6)..fillRange(0, ns * nst * 6, kNaN),
       rank = Int32List(ns * nst),
       flags = Uint8List(ns * nst),
@@ -224,6 +255,7 @@ class ScoreBook {
       pct[j] = x.pct;
       rank[j] = x.rank;
       vol[j] = x.raw.vol;
+      val60[j] = x.raw.val60;
       var f = 0;
       for (final fl in x.flags) {
         f |= 1 << fl.index;

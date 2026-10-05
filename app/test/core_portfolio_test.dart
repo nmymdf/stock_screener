@@ -46,7 +46,7 @@ void main() {
 
   test('回測：檔數、單一檔與產業上限、每月換股上限、成本', () {
     final sim = result.sim;
-    expect(sim.holdings.length, lessThanOrEqualTo(12));
+    expect(sim.holdings.length, lessThanOrEqualTo(15));
     expect(sim.holdings.length, greaterThanOrEqualTo(8));
     for (final w in sim.holdings.values) {
       expect(w.$1, lessThanOrEqualTo(0.2 + 1e-6));

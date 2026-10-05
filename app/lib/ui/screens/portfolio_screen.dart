@@ -98,15 +98,16 @@ class _IdealView extends StatelessWidget {
     final total = r.live.ranked.length;
     final held = sim.holdings.keys.toSet();
     final bench = r.data.hasTri ? '加權報酬指數（含息）' : '加權指數';
+    final core = sim.cfg.coreWeight;
     final candidates = [
       for (final x in r.live.ranked)
         if (x.investable && !held.contains(x.si) && !x.broken && !x.flags.contains(LtFlag.loss)) x,
     ].take(15).toList();
     final left = <Widget>[
       SectionCard(
-        title: '策略目前持有 ${hold.length} 檔',
+        title: core > 0 ? '大盤核心＋選股 ${hold.length} 檔' : '策略目前持有 ${hold.length} 檔',
         trailing: Text(
-          '股票 ${pc(1 - math.max(0.0, sim.cashWeight))}・現金 ${pc(math.max(0.0, sim.cashWeight))}',
+          '${core > 0 ? '大盤 ${pc(core)}・' : ''}選股 ${pc((1 - core) * (1 - math.max(0.0, sim.cashWeight)))}・現金 ${pc((1 - core) * math.max(0.0, sim.cashWeight))}',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         child: Column(
@@ -118,14 +119,19 @@ class _IdealView extends StatelessWidget {
               '每筆持股平均抱 ${(s.avgHoldDays / 21).toStringAsFixed(1)} 個月，${pc(s.posWin)} 賣出時是賺錢的。',
               style: const TextStyle(fontSize: 13, height: 1.4),
             ),
-            Row(
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                const Expanded(child: _CapitalField()),
+                const _CapitalField(),
                 TextButton(onPressed: () => HomeShell.goTo(context, HomeShell.backtest), child: const Text('看完整回測 →')),
               ],
             ),
             const Divider(height: 8),
-            for (final e in hold) _HoldRow(r: r, si: e.key, weight: e.value.$1, since: e.value.$2, total: total),
+            if (core > 0) _CoreRow(weight: core),
+            for (final e in hold)
+              _HoldRow(r: r, si: e.key, weight: e.value.$1 * (1 - core), since: e.value.$2, total: total),
             if (sim.rebalances.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -374,26 +380,27 @@ class _SwapView extends StatelessWidget {
       children: [
         SectionCard(
           title: '汰弱留強：${adv.replaceCount == 0 ? '這個月不用換' : '建議換 ${adv.replaceCount} 檔'}',
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('每月最多換', style: Theme.of(context).textTheme.bodySmall),
-              const SizedBox(width: 4),
-              DropdownButton<int>(
-                value: lt.maxSwaps,
-                underline: const SizedBox.shrink(),
-                items: [
-                  for (final n in const [2, 3, 4, 5]) DropdownMenuItem(value: n, child: Text('$n 檔')),
-                ],
-                onChanged: (v) {
-                  if (v != null) lt.setMaxSwaps(v);
-                },
-              ),
-            ],
-          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                children: [
+                  Text('每月最多換', style: Theme.of(context).textTheme.bodySmall),
+                  DropdownButton<int>(
+                    value: lt.maxSwaps,
+                    isDense: true,
+                    underline: const SizedBox.shrink(),
+                    items: [
+                      for (final n in const [2, 3, 4, 5]) DropdownMenuItem(value: n, child: Text('$n 檔')),
+                    ],
+                    onChanged: (v) {
+                      if (v != null) lt.setMaxSwaps(v);
+                    },
+                  ),
+                ],
+              ),
               Text(
                 '手上 ${inputs.length} 檔：續抱 $keep、觀察 $watch、建議汰換 ${adv.replaceCount}'
                 '${groups[SwapAction.notRated] == null ? '' : '、不在評分範圍 ${groups[SwapAction.notRated]!.length}'}。'
@@ -522,8 +529,9 @@ class _CapitalFieldState extends State<_CapitalField> {
   @override
   Widget build(BuildContext context) => Align(
     alignment: Alignment.centerLeft,
+    widthFactor: 1,
     child: SizedBox(
-      width: 190,
+      width: 170,
       child: TextField(
         controller: _c,
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -562,4 +570,34 @@ class _Amount extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 大盤核心那一列：市值型 ETF。
+class _CoreRow extends StatelessWidget {
+  final double weight;
+  const _CoreRow({required this.weight});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 8),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 56,
+          child: Text(pc(weight, 1), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+        ),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('大盤核心：0050 或 006208', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              Text('市值型 ETF，跟著加權指數（含台積電等大型股）走；每月檢視時調回這個比例，不用選股', style: Theme.of(context).textTheme.bodySmall),
+              _Amount(weight: weight, price: null),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 }
