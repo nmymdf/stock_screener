@@ -150,8 +150,11 @@ void main() {
     Future<http.Response> pass(http.Request req) async =>
         http.Response.fromStream(await ok.send(http.Request('GET', req.url)));
     var fails = <String, int>{'lt-2026.json.gz': 2};
+    final missingOnce = {'lt-2025.json.gz'};
     final flaky = MockClient((req) async {
       final name = req.url.pathSegments.last;
+      // 晚上更新時檔案正在被換掉：清單上有，但暫時 404
+      if (missingOnce.remove(name)) return http.Response('not found', 404);
       final left = fails[name] ?? 0;
       if (left > 0) {
         fails[name] = left - 1;
@@ -166,7 +169,7 @@ void main() {
       retryDelays: const [Duration.zero, Duration.zero],
     );
     await store.load();
-    // 失敗兩次，第三次成功
+    // 失敗兩次，第三次成功；暫時 404 的也重試
     expect(await store.update(), isTrue);
     expect(store.error, isNull);
     expect(store.local.keys, containsAll(['lt-2025.json.gz', 'lt-2026.json.gz']));

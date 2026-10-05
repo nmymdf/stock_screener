@@ -158,7 +158,7 @@ class DataPackStore extends ChangeNotifier {
       if (changed) version++;
     } catch (e) {
       error = switch (e) {
-        _HttpStatus(:final what, :final code) when code >= 500 =>
+        _HttpStatus(:final what, :final code, :final transient) when transient =>
           'GitHub 暫時出錯，下載$what失敗（HTTP $code，已自動重試 ${retryDelays.length} 次）。請過幾分鐘再按一次；已經下載好的檔案會保留，不用從頭來。',
         _HttpStatus(:final what, :final code) => '下載$what失敗（HTTP $code）',
         HttpException(:final message) => message,
@@ -181,7 +181,7 @@ class DataPackStore extends ChangeNotifier {
         return await run(attempt);
       } catch (e) {
         final transient = switch (e) {
-          _HttpStatus(:final code) => code >= 500 || code == 429 || code == 408,
+          _HttpStatus(:final transient) => transient,
           SocketException() || TimeoutException() || http.ClientException() || HandshakeException() => true,
           _ => false,
         };
@@ -201,7 +201,8 @@ class DataPackStore extends ChangeNotifier {
       final res = await _client.send(req).timeout(const Duration(seconds: 60));
       if (res.statusCode != 200) {
         await res.stream.drain<void>().catchError((_) {});
-        throw _HttpStatus(' ${info.name} ', res.statusCode);
+        // 清單上有、卻回 404：多半是晚上更新時檔案正在被換掉，等一下再試
+        throw _HttpStatus(' ${info.name} ', res.statusCode, retry: res.statusCode == 404);
       }
       final sink = tmp.openWrite();
       var lastNotify = DateTime.now();
@@ -246,7 +247,9 @@ class DataPackStore extends ChangeNotifier {
 class _HttpStatus implements Exception {
   final String what;
   final int code;
-  const _HttpStatus(this.what, this.code);
+  final bool retry;
+  const _HttpStatus(this.what, this.code, {this.retry = false});
+  bool get transient => retry || code >= 500 || code == 429 || code == 408;
   @override
   String toString() => '下載$what失敗（HTTP $code）';
 }
