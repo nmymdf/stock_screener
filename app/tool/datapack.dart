@@ -256,7 +256,83 @@ Future<void> probe(Fetcher f) async {
       '${s.key}（${s.source}，延後 ${s.lagDays} 天）：${s.dates.length} 筆 ${s.dates.firstOrNull}～${s.dates.lastOrNull} 最新=${s.values.lastOrNull}',
     );
   }
+  await probeShares(f, _ymd(d));
   print('\n共 ${f.requests} 次請求');
+}
+
+/// 研究用：歷史「發行股數」（算市值權重）。外資持股統計 MI_QFIIS 每天都有每檔的發行股數。
+/// 驗證方法：用前一天的股數 × 收盤價算出市值加權的漲跌，跟加權指數的漲跌比。
+Future<void> probeShares(Fetcher f, String recent) async {
+  print('\n==== 發行股數（MI_QFIIS）====');
+  Map<String, double> shares(Map<String, dynamic> body) {
+    final out = <String, double>{};
+    for (final (fields, data) in twseTables(body)) {
+      final ci = fields.indexWhere((x) => x.contains('代號'));
+      final si = fields.indexWhere((x) => x.contains('發行股數'));
+      if (ci < 0 || si < 0) continue;
+      for (final r in data) {
+        final v = double.tryParse(r[si].toString().replaceAll(',', '').trim());
+        if (v != null && v > 0) out[r[ci].toString().trim()] = v;
+      }
+    }
+    return out;
+  }
+
+  // 找 recent 的前一個交易日
+  final r = DateTime.parse(recent);
+  var p = r.subtract(const Duration(days: 1));
+  while (p.weekday > 5) {
+    p = p.subtract(const Duration(days: 1));
+  }
+  for (final (a, b) in [
+    (_ymd(p), recent),
+    ('2014-01-02', '2014-01-03'),
+    ('2019-06-04', '2019-06-05'),
+    ('2008-06-03', '2008-06-04'),
+  ]) {
+    final q = await f.json(_twse('/rwd/zh/fund/MI_QFIIS', {'date': _compact(a), 'selectType': 'ALLBUT0999'}));
+    if (q == null) {
+      print('$a：失敗');
+      continue;
+    }
+    final sh = shares(q);
+    print('$a：stat=${q['stat']} 欄位=${twseTables(q).firstOrNull?.$1}');
+    print(
+      '  有發行股數 ${sh.length} 檔，普通股 ${sh.keys.where(isCommonStockCode).length}；2330=${sh['2330']} 2317=${sh['2317']} 2454=${sh['2454']}',
+    );
+    final m0 = await fetchMiIndex(f, a), m1 = await fetchMiIndex(f, b);
+    if (m0 == null || m1 == null) {
+      print('  行情失敗');
+      continue;
+    }
+    final p0 = parseTwseDaily(a, m0), p1 = parseTwseDaily(b, m1);
+    var c0 = 0.0, c1 = 0.0, cap = 0.0, tsmc = 0.0;
+    for (final e in sh.entries) {
+      if (!isCommonStockCode(e.key)) continue;
+      final x0 = p0[e.key]?.close, x1 = p1[e.key]?.close;
+      if (x0 == null || x1 == null || x0 <= 0 || x1 <= 0) continue;
+      c0 += e.value * x0;
+      c1 += e.value * x1;
+      cap += e.value * x0;
+      if (e.key == '2330') tsmc = e.value * x0;
+    }
+    final t0 = parseTaiex(m0), t1 = parseTaiex(m1);
+    final mine = c1 / c0 - 1;
+    final real = (t0 == null || t1 == null) ? double.nan : t1 / t0 - 1;
+    print(
+      '  $a→$b 市值加權算出 ${(mine * 100).toStringAsFixed(3)}%，加權指數 ${(real * 100).toStringAsFixed(3)}%，'
+      '差 ${((mine - real) * 100).toStringAsFixed(3)}%；總市值 ${(cap / 1e12).toStringAsFixed(2)} 兆，台積電占 ${(tsmc / cap * 100).toStringAsFixed(1)}%',
+    );
+  }
+  final o = await f.bytes(Uri.https('openapi.twse.com.tw', '/v1/opendata/t187ap03_L'));
+  if (o == null) {
+    print('OpenAPI t187ap03_L：失敗');
+  } else {
+    final l = jsonDecode(utf8.decode(o)) as List;
+    final row = l.cast<Map<String, dynamic>>().firstWhere((x) => x.values.contains('2330'), orElse: () => {});
+    print('OpenAPI t187ap03_L：${l.length} 家；欄位 ${(l.firstOrNull as Map?)?.keys.take(20).join('|')}');
+    print('  2330：${row.entries.where((e) => e.key.contains('股')).map((e) => '${e.key}=${e.value}').join('；')}');
+  }
 }
 
 // ───────────────────────────── 每日行情 ─────────────────────────────
