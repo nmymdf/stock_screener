@@ -58,7 +58,8 @@ void main() {
     }
     expect(ind.values.every((n) => n <= const LtConfig().maxPerIndustry), isTrue);
     for (final r in sim.rebalances.skip(1)) {
-      final buys = r.trades.where((t) => t.buy && t.code.isNotEmpty).length;
+      // 換股上限只算新買進的（補回縮水部位不算換股）
+      final buys = r.trades.where((t) => t.buy && t.code.isNotEmpty && !t.reason.contains('補回')).length;
       expect(buys, lessThanOrEqualTo(5), reason: r.date);
     }
     expect(sim.stats.positions, greaterThan(0));

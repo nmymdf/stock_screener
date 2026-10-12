@@ -40,6 +40,13 @@ class LtConfig {
   /// 新買進的最低流動性：近 60 日平均每天成交值（百萬元）。
   final double minValue;
 
+  /// 持有中的股票成交值掉到這以下（百萬元／天）就在檢視日換掉；0 = 不檢查。
+  final double exitValue;
+
+  /// 檢視日買新股時，從超配的持股挪錢，讓新股買到目標權重；
+  /// 也把縮水到目標一半以下的持股補回目標（不讓持股變成 1% 這種買不下手的零碎部位）。
+  final bool fundBuys;
+
   /// 大盤核心比例：這部分放市值型 ETF（0050），用加權報酬指數扣 0.3% 年費模擬；
   /// 其餘才是選股。每月檢視日調回目標比例。預設 50%：選股的優勢很小，大盤（尤其台積電）
   /// 大漲時全部選股很容易落後，一半放大盤可以接近大盤的報酬、又保留選股少跌的好處。
@@ -55,7 +62,9 @@ class LtConfig {
     this.universeBuyFrac = 0.2,
     this.skipOverheat = true,
     this.equalWeight = false,
-    this.minValue = 50,
+    this.minValue = 200,
+    this.exitValue = 50,
+    this.fundBuys = true,
     this.size = 15,
     this.maxWeight = 0.15,
     this.maxIndustry = 0.30,
@@ -80,6 +89,8 @@ class LtConfig {
     bool? skipOverheat,
     bool? equalWeight,
     double? minValue,
+    double? exitValue,
+    bool? fundBuys,
     double? maxWeight,
     int? universeTop,
     double? universeBuyFrac,
@@ -102,6 +113,8 @@ class LtConfig {
     skipOverheat: skipOverheat ?? this.skipOverheat,
     equalWeight: equalWeight ?? this.equalWeight,
     minValue: minValue ?? this.minValue,
+    exitValue: exitValue ?? this.exitValue,
+    fundBuys: fundBuys ?? this.fundBuys,
   );
 
   /// 單一產業最多幾檔（檔數上限，權重另外再限制）。
@@ -371,6 +384,10 @@ class PortfolioSim {
         sells[si] = _brokenReason(x);
         continue;
       }
+      if (cfg.exitValue > 0 && !x.raw.val60.isNaN && x.raw.val60 < cfg.exitValue) {
+        sells[si] = illiquidReason(x.raw.val60);
+        continue;
+      }
       if (t - e.value >= cfg.minHoldDays && x.pct < cfg.holdPct) {
         weak.add(x);
       } else {
@@ -460,6 +477,8 @@ class PortfolioSim {
     return LtDecision(t, sells, buys, targetWeights(picks, cfg), exp);
   }
 
+  static String illiquidReason(double val60) => '成交量太小：近 60 日平均每天只成交 ${moneyText(val60)}，買賣不容易，換成流動性好的';
+
   static String _brokenReason(LtScore x) {
     final f = x.flags;
     if (f.contains(LtFlag.downtrend) && f.contains(LtFlag.revenueDrop)) return '長期理由破壞：年線下彎而且營收衰退';
@@ -513,12 +532,14 @@ class PortfolioSim {
     }
     final nav = _value(t);
     final targetEquity = d.exposure.level * nav;
+    if (cfg.fundBuys) _fund(d, t, nav, targetEquity, trades);
     for (final (si, reason) in d.buys) {
       final px = data.stocks[si].trAt(t);
       if (px.isNaN || px <= 0) continue;
       final want = (d.target[si] ?? 0) * targetEquity;
       final spend = math.min(want, _cash / (1 + cfg.buyCost));
-      if (spend <= nav * 0.005) continue;
+      // 錢不夠買到目標的一半就先不買（不買零碎部位），留到下次
+      if (spend <= nav * 0.005 || (cfg.fundBuys && spend < want * 0.5)) continue;
       _cash -= spend * (1 + cfg.buyCost);
       _turnoverValue += spend;
       _pos[si] = _Pos(spend / px, t, px);
@@ -577,6 +598,61 @@ class PortfolioSim {
     return LtRebalance(data.dates[d.t], data.dates[t], d.exposure.level, trades, [
       for (final si in _pos.keys) data.stocks[si].code,
     ]);
+  }
+
+  /// 檢視日的資金調度：新股要買到目標權重、縮水到目標一半以下的持股補回目標；
+  /// 現金不夠就從超配（超過目標 1.2 倍）的持股挪，挪多少賣多少、不全面重新平衡。
+  void _fund(LtDecision d, int t, double nav, double targetEquity, List<LtTrade> trades) {
+    double cur(int si) => _pos[si]!.units * data.stocks[si].trAt(t);
+    double tgt(int si) => (d.target[si] ?? 0) * targetEquity;
+    final topUps = <int, double>{};
+    for (final si in _pos.keys) {
+      final px = data.stocks[si].trAt(t);
+      if (px.isNaN || px <= 0 || d.sells.containsKey(si)) continue;
+      final c = cur(si), g = tgt(si);
+      if (g > 0 && c < g * 0.5) topUps[si] = g - c;
+    }
+    var need = topUps.values.fold(0.0, (a, b) => a + b);
+    for (final (si, _) in d.buys) {
+      need += tgt(si);
+    }
+    need = need * (1 + cfg.buyCost) - _cash;
+    if (need > nav * 0.002) {
+      final over = <int, double>{};
+      for (final si in _pos.keys) {
+        final px = data.stocks[si].trAt(t);
+        if (px.isNaN || px <= 0) continue;
+        final extra = cur(si) - tgt(si) * 1.2;
+        if (extra > 0) over[si] = extra;
+      }
+      final avail = over.values.fold(0.0, (a, b) => a + b);
+      if (avail > 0) {
+        final f = math.min(1.0, need / (avail * (1 - cfg.sellCost)));
+        for (final e in over.entries) {
+          final px = data.stocks[e.key].trAt(t);
+          final cut = e.value * f;
+          if (cut < nav * 0.002) continue;
+          _pos[e.key]!.units -= cut / px;
+          _cash += cut * (1 - cfg.sellCost);
+          _turnoverValue += cut;
+          trades.add(LtTrade(data.dates[t], data.stocks[e.key].code, false, cut / nav, '超過目標權重，減碼一部分給新買的股票'));
+        }
+      }
+    }
+    // 先補縮水太多的（錢不夠就按比例）
+    final tu = topUps.values.fold(0.0, (a, b) => a + b);
+    final buyNeed = d.buys.fold(0.0, (a, b) => a + tgt(b.$1)) * (1 + cfg.buyCost);
+    final budget = math.min(tu, math.max(0.0, (_cash - buyNeed) / (1 + cfg.buyCost)));
+    if (tu > 0 && budget > nav * 0.002) {
+      for (final e in topUps.entries) {
+        final px = data.stocks[e.key].trAt(t);
+        final add = budget * e.value / tu;
+        _pos[e.key]!.units += add / px;
+        _cash -= add * (1 + cfg.buyCost);
+        _turnoverValue += add;
+        trades.add(LtTrade(data.dates[t], data.stocks[e.key].code, true, add / nav, '部位縮水到目標一半以下，補回目標權重'));
+      }
+    }
   }
 
   SimResult run() {
@@ -895,6 +971,10 @@ SwapAdvice swapAdvice(
       action = SwapAction.keep;
       reasons.add('總分第 ${x.rank} 名（前 ${((1 - x.pct) * 100).toStringAsFixed(0)}%），長期理由還在');
     }
+    if (cfg.exitValue > 0 && !x.raw.val60.isNaN && x.raw.val60 < cfg.exitValue) {
+      reasons.add('成交量小：近 60 日平均每天只成交 ${moneyText(x.raw.val60)}，大額買賣不容易');
+      if (action == SwapAction.keep) action = SwapAction.watch;
+    }
     if (ws > cfg.maxWeight) {
       reasons.add('佔選股部位 ${(ws * 100).toStringAsFixed(0)}%，超過單一檔 ${(cfg.maxWeight * 100).round()}% 的上限，可考慮分批調節');
     }
@@ -960,3 +1040,8 @@ String? coreAdvice(double actual, double target, double total) {
   final now = '大盤核心（0050／006208）目前佔 ${(actual * 100).round()}%，設定是 ${(target * 100).round()}%';
   return gap > 0 ? '$now，少了約 $money 萬。不用一次補齊：新投入的錢、汰換賣出的錢先買 0050，慢慢調回。' : '$now，多了約 $money 萬。不用急著賣：新投入的錢先放選股，慢慢調回。';
 }
+
+/// 百萬元 → 「3,000 萬」「2.5 億」。
+String moneyText(double millions) => millions >= 100
+    ? '${(millions / 100).toStringAsFixed(millions >= 1000 ? 0 : 1)} 億元'
+    : '${(millions * 100).round()} 萬元';

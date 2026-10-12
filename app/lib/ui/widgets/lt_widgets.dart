@@ -319,3 +319,110 @@ class ExposureCard extends StatelessWidget {
 /// 短線分析（每日行情）的單檔報告，給進場時機提示用。
 StockReport? shortReportOf(BuildContext context, String code) =>
     context.select<HistoryStore, StockReport?>((s) => s.analysis?.stock(code));
+
+/// 某檔股票近 [days] 個交易日的含息走勢和同期大盤（都從 1 開始），給走勢小圖用。
+(List<double>, List<double>) trendOf(LtResult r, int si, {int days = 250}) {
+  final d = r.data;
+  final st = d.stocks[si];
+  final end = d.nd - 1;
+  final start = (end - days).clamp(st.start, end);
+  final s = <double>[], b = <double>[];
+  double? s0, b0;
+  for (var t = start; t <= end; t++) {
+    final v = st.trAt(t);
+    final x = d.tri[t].isNaN ? d.taiex[t] : d.tri[t];
+    if (v.isNaN || x.isNaN) continue;
+    s0 ??= v;
+    b0 ??= x;
+    s.add(v / s0);
+    b.add(x / b0);
+  }
+  return (s, b);
+}
+
+/// 走勢小圖：股票（紅漲綠跌）＋大盤（灰），附一年漲跌、比大盤多少、離一年高點多少。
+class TrendSpark extends StatelessWidget {
+  final LtResult r;
+  final int si;
+  final double width, height;
+  const TrendSpark({super.key, required this.r, required this.si, this.width = 260, this.height = 44});
+
+  @override
+  Widget build(BuildContext context) {
+    final (s, b) = trendOf(r, si);
+    if (s.length < 20) return const SizedBox.shrink();
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final ret = s.last - 1, bret = b.last - 1;
+    final hi = s.reduce((a, c) => a > c ? a : c);
+    final c = changeColor(context, ret);
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 2,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          SizedBox(
+            width: width,
+            height: height,
+            child: CustomPaint(
+              painter: _SparkPainter(s, b, c, dark ? const Color(0xFF6B7785) : const Color(0xFFB0B8C0)),
+            ),
+          ),
+          Text(
+            '近一年 ${sp(ret, 0)}（大盤 ${sp(bret, 0)}）・離高點 ${sp(s.last / hi - 1, 0)}',
+            style: TextStyle(fontSize: 12, color: Theme.of(context).textTheme.bodySmall?.color),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SparkPainter extends CustomPainter {
+  final List<double> s, b;
+  final Color color, benchColor;
+  _SparkPainter(this.s, this.b, this.color, this.benchColor);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final all = [...s, ...b];
+    var lo = all.reduce((a, c) => a < c ? a : c), hi = all.reduce((a, c) => a > c ? a : c);
+    if (hi - lo < 1e-9) hi = lo + 1;
+    Path path(List<double> v) {
+      final p = Path();
+      for (var i = 0; i < v.length; i++) {
+        final x = v.length == 1 ? 0.0 : size.width * i / (v.length - 1);
+        final y = size.height - (v[i] - lo) / (hi - lo) * size.height;
+        i == 0 ? p.moveTo(x, y) : p.lineTo(x, y);
+      }
+      return p;
+    }
+
+    // 起點的水平虛線（1.0）
+    final y1 = size.height - (1 - lo) / (hi - lo) * size.height;
+    final dash = Paint()
+      ..color = benchColor.withValues(alpha: 0.6)
+      ..strokeWidth = 0.8;
+    for (var x = 0.0; x < size.width; x += 6) {
+      canvas.drawLine(Offset(x, y1), Offset(x + 3, y1), dash);
+    }
+    canvas.drawPath(
+      path(b),
+      Paint()
+        ..color = benchColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2,
+    );
+    canvas.drawPath(
+      path(s),
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.8,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SparkPainter old) => old.s != s || old.b != b || old.color != color;
+}

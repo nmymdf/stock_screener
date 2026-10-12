@@ -102,7 +102,12 @@ class _IdealView extends StatelessWidget {
     final core = sim.cfg.coreWeight;
     final candidates = [
       for (final x in r.live.ranked)
-        if (x.investable && !held.contains(x.si) && !x.broken && !x.flags.contains(LtFlag.loss)) x,
+        if (x.investable &&
+            !held.contains(x.si) &&
+            !x.broken &&
+            !x.flags.contains(LtFlag.loss) &&
+            (x.raw.val60.isNaN || x.raw.val60 >= sim.cfg.minValue))
+          x,
     ].take(15).toList();
     final left = <Widget>[
       SectionCard(
@@ -194,7 +199,7 @@ class _IdealView extends StatelessWidget {
       ),
       SectionCard(
         title: '候補名單',
-        trailing: Text('總分前 15、還沒持有', style: Theme.of(context).textTheme.bodySmall),
+        trailing: Text('總分前 15、還沒持有、成交量夠', style: Theme.of(context).textTheme.bodySmall),
         child: Column(
           children: [for (final x in candidates) _CandidateRow(r: r, s: x, total: total)],
         ),
@@ -203,8 +208,8 @@ class _IdealView extends StatelessWidget {
         title: '規則',
         child: Bullets(const [
           '每月 11 日以後第一個交易日檢視一次（月營收 10 日前公布完），隔天收盤調整。',
-          '新買：全市場總分前 10%、成交量夠、沒有過熱、沒有虧損。',
-          '續抱：總分還在前 30% 就不動；至少抱 3 個月，除非長期理由破壞（年線下彎又營收衰退、虧損又轉弱、或掉到後 15%）。',
+          '新買：全市場總分前 10%、每天平均成交 2 億元以上、沒有過熱、沒有虧損；買到目標權重，不買零碎部位。',
+          '續抱：總分還在前 30% 就不動；至少抱 3 個月，除非長期理由破壞（年線下彎又營收衰退、虧損又轉弱、或掉到後 15%）或每天成交掉到 5,000 萬元以下。',
           '每月最多換 5 檔，換上去的要明顯更強；單一檔最多 15%、單一產業最多 30%。',
           '權重：分數越高、波動越低的配越多。',
           '角色：大盤核心負責跟上大盤；選股名單是衛星，目標是少跌、避開地雷、多賺一點點，不保證每次贏大盤。',
@@ -245,10 +250,24 @@ class _HoldRow extends StatelessWidget {
                 children: [
                   Text('${st.code} ${st.name}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                   Text(
-                    [if (s != null) rankText(s, total), '買進 $since', if (s != null) ...ltHighlights(s)].join('・'),
+                    [
+                      if (s != null) rankText(s, total),
+                      '買進 $since',
+                      if (s != null && !s.raw.val60.isNaN) '每天成交約 ${moneyText(s.raw.val60)}',
+                      if (s != null) ...ltHighlights(s),
+                    ].join('・'),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
+                  if (s != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Text(
+                        s.pct >= 0.9 ? '為什麼在名單裡：總分在全市場前 10%，符合新買條件' : '為什麼在名單裡：已經持有，總分還在前 30% 所以續抱（不因為小幅轉弱就賣）',
+                        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.primary),
+                      ),
+                    ),
                   if (s != null && s.flags.isNotEmpty) ...[const SizedBox(height: 3), LtFlagTags(s.flags)],
+                  TrendSpark(r: r, si: si),
                   if (timing != null)
                     Padding(
                       padding: const EdgeInsets.only(top: 3),
@@ -327,10 +346,15 @@ class _CandidateRow extends StatelessWidget {
                 children: [
                   Text('${st.code} ${st.name}', style: const TextStyle(fontWeight: FontWeight.w700)),
                   Text(
-                    [...ltHighlights(s), if (timing != null) timing.$1].join('・'),
+                    [
+                      if (!s.raw.val60.isNaN) '每天成交約 ${moneyText(s.raw.val60)}',
+                      ...ltHighlights(s),
+                      if (timing != null) timing.$1,
+                    ].join('・'),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                   if (s.flags.isNotEmpty) ...[const SizedBox(height: 2), LtFlagTags(s.flags)],
+                  TrendSpark(r: r, si: s.si, width: 200, height: 36),
                 ],
               ),
             ),
