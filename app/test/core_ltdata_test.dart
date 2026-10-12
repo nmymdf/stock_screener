@@ -115,6 +115,35 @@ void main() {
     expect(b.eventsFromChange, 0);
   });
 
+  test('減資恢復買賣：股價變 3 倍不是真的漲，用證交所參考價接起來', () {
+    final raw = _rawYear();
+    final days = raw.sortedDays;
+    // 1101 第 40～42 天停牌，第 43 天起減資 3:1（股價 × 3），恢復買賣那天沒有漲跌價差
+    for (var k = 43; k < days.length; k++) {
+      final row = days[k].twse['1101']!;
+      days[k].twse['1101'] = [for (var i = 0; i < 4; i++) row[i] * 3, row[4], if (k > 43) row[5] * 3];
+    }
+    final before = days[39].twse['1101']!.close;
+    final resume = days[43].date;
+    final noFix = LtDataBuilder()..addLtYear(ltYearJson(raw));
+    final fixed = LtDataBuilder(
+      dividends: DividendData({}, {
+        '1101': [DivEvent(resume, before, before * 3, 0, '減資')],
+      }),
+    )..addLtYear(ltYearJson(raw));
+    double jump(LtDataBuilder b) {
+      final d = b.build();
+      final s = d.stock('1101')!;
+      return s.trAt(43) / s.trAt(39);
+    }
+
+    expect(jump(noFix), greaterThan(2.9)); // 沒修正：假的漲了 200%
+    expect(jump(fixed), closeTo(1.002, 1e-3)); // 修正後只剩真實的漲幅（停牌期間價格沒變，恢復那天漲 0.2%）
+    expect(fixed.eventsFromCapital, 1);
+    // 減資不是股利
+    expect(DividendData({}, {'1101': []}).byCode, isEmpty);
+  });
+
   test('停牌的日子是 NaN，trAt 往前找最近一次成交；60 日成交值把停牌日算 0', () {
     final b = LtDataBuilder();
     for (final d in _rawYear().sortedDays) {

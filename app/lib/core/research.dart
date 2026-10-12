@@ -188,7 +188,10 @@ String runPackResearch(String dir) {
     '報酬指數：${data.hasTri ? '有' : '沒有（改用加權指數，會低估基準）'}；營收 ${data.revenue.cur.length} 家、最新 ${data.revenue.lastMonth}；'
     '除權息 ${data.dividends.byCode.length} 家；國際指標 ${data.intl.series.keys.join('、')}',
   );
-  sb.writeln('總報酬指數的除權息調整：證交所公布 ${data.eventsFromTwse} 次、用漲跌價差推算 ${data.eventsFromChange} 次');
+  sb.writeln(
+    '總報酬指數的除權息調整：證交所公布 ${data.eventsFromTwse} 次、用漲跌價差推算 ${data.eventsFromChange} 次、'
+    '減資／變更面額 ${data.eventsFromCapital} 次',
+  );
   final tri0 = data.tri.indexWhere((x) => !x.isNaN);
   if (tri0 >= 0) {
     final yrs = (data.nd - 1 - tri0) / 250;

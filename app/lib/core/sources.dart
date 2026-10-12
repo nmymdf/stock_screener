@@ -166,6 +166,28 @@ Map<String, List<DivEvent>> parseTwt49u(Map<String, dynamic> body) {
   return out;
 }
 
+/// 減資（TWTAUU）、變更面額（TWTB8U）恢復買賣：代號 → 事件（[kind] 是「減資」或「面額」）。
+/// 停止買賣前收盤價 → 恢復買賣參考價，股價跳動不是真的漲跌，算總報酬時要用參考價接起來。
+Map<String, List<DivEvent>> parseCapitalChange(Map<String, dynamic> body, String kind) {
+  final out = <String, Map<String, DivEvent>>{};
+  for (final (fields, data) in twseTables(body)) {
+    final names = [for (final f in fields) _norm(f)];
+    final date = names.indexWhere((n) => n.contains('恢復買賣日期'));
+    final code = names.indexWhere((n) => n.contains('代號'));
+    final before = names.indexWhere((n) => n.contains('停止買賣前收盤'));
+    final ref = names.indexWhere((n) => n == '恢復買賣參考價');
+    if ([date, code, before, ref].any((i) => i < 0)) continue;
+    for (final row in data) {
+      if (row is! List || row.length <= [date, code, before, ref].reduce((a, b) => a > b ? a : b)) continue;
+      final d = rocToIso(row[date].toString());
+      final b = parseNum(row[before]), r = parseNum(row[ref]);
+      if (d == null || b == null || r == null || b <= 0 || r <= 0) continue;
+      (out[row[code].toString().trim()] ??= {})[d] = DivEvent(d, b, r, 0, kind); // 同一天重複列只留一筆
+    }
+  }
+  return {for (final e in out.entries) e.key: e.value.values.toList()};
+}
+
 /// 每月營收：代號 → (當月營收, 去年當月營收)，單位千元。
 typedef MonthRevenue = Map<String, (double, double?)>;
 

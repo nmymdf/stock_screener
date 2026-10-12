@@ -100,11 +100,12 @@ class LtData {
   final IntlData intl;
 
   /// 建資料時偵測到的除權息天數：用證交所公布的、用漲跌價差推算的（驗證用）。
-  final int eventsFromTwse, eventsFromChange;
+  final int eventsFromTwse, eventsFromChange, eventsFromCapital;
 
   LtData({
     this.eventsFromTwse = 0,
     this.eventsFromChange = 0,
+    this.eventsFromCapital = 0,
     required this.dates,
     required this.stocks,
     required this.taiex,
@@ -163,6 +164,7 @@ class _State {
   final _F32 tr = _F32();
   double lastClose = kNaN, lastTr = kNaN;
   int lastT = -1; // 最後一次更新 ring 的日子
+  int lastTradeT = -1; // 最後一次成交的日子
   final Float32List rVal = Float32List(60), rVol = Float32List(60), rFi = Float32List(60), rIt = Float32List(60);
   double sVal = 0, sVol = 0, sFi = 0, sIt = 0;
   double pe = kNaN, pb = kNaN, yld = kNaN;
@@ -204,14 +206,21 @@ class _State {
 class LtDataBuilder {
   /// 證交所公布的除權息（有的話用它的參考價，最準）：代號 → 日期 → 事件。
   final Map<String, Map<String, DivEvent>> _div;
+
+  /// 減資、變更面額恢復買賣：代號 → 恢復買賣日 → 事件。
+  final Map<String, Map<String, DivEvent>> _cap;
   LtDataBuilder({DividendData? dividends})
     : _div = {
         for (final e in (dividends?.byCode ?? const <String, List<DivEvent>>{}).entries)
           e.key: {for (final x in e.value) x.date: x},
+      },
+      _cap = {
+        for (final e in (dividends?.capital ?? const <String, List<DivEvent>>{}).entries)
+          e.key: {for (final x in e.value) x.date: x},
       };
 
-  /// 偵測到的除權息天數（驗證用）：用證交所事件的、用漲跌價差推算的。
-  int eventsFromTwse = 0, eventsFromChange = 0;
+  /// 偵測到的除權息天數（驗證用）：用證交所事件的、用漲跌價差推算的；減資／變更面額接起來的。
+  int eventsFromTwse = 0, eventsFromChange = 0, eventsFromCapital = 0;
 
   final List<String> dates = [];
   final List<double> _taiex = [], _tri = [];
@@ -247,8 +256,20 @@ class LtDataBuilder {
       tr = close;
     } else {
       var base = st.lastClose;
+      // 減資、變更面額：停止買賣期間（上次成交的隔天到今天）有恢復買賣事件，就用參考價接起來
+      var capF = 1.0;
+      final cap = _cap[code];
+      if (cap != null) {
+        for (var g = st.lastTradeT + 1; g <= t; g++) {
+          final ce = cap[dates[g]];
+          if (ce != null && ce.before > 0 && ce.ref > 0) capF *= ce.ref / ce.before;
+        }
+      }
       final ev = _div[code]?[dates[t]];
-      if (ev != null && ev.before > 0 && ev.ref > 0 && ev.ref < ev.before) {
+      if (capF != 1.0) {
+        base = st.lastClose * capF;
+        eventsFromCapital++;
+      } else if (ev != null && ev.before > 0 && ev.ref > 0 && ev.ref < ev.before) {
         base = st.lastClose * ev.ref / ev.before;
         eventsFromTwse++;
       } else if (chg != null && (close - st.lastClose - chg).abs() >= 0.006) {
@@ -264,6 +285,7 @@ class LtDataBuilder {
     st.tr.add(tr);
     st.lastClose = close;
     st.lastTr = tr;
+    st.lastTradeT = t;
     st.advance(t);
     // 收盤 × 張數 = 千元，再除 1000 = 百萬元
     st.put(t, close * lots / 1000, lots.toDouble(), fi.toDouble(), it.toDouble());
@@ -383,6 +405,7 @@ class LtDataBuilder {
     return LtData(
       eventsFromTwse: eventsFromTwse,
       eventsFromChange: eventsFromChange,
+      eventsFromCapital: eventsFromCapital,
       dates: List.unmodifiable(dates),
       stocks: [for (final s in stocks) s!],
       taiex: Float64List.fromList(_taiex),

@@ -623,6 +623,23 @@ Future<void> updateDividends(Fetcher f, Directory dir, int fromYear, int toYear)
     div.merge(ev);
     print('  $y：${ev.length} 檔、${ev.values.fold(0, (s, l) => s + l.length)} 筆除權息');
   }
+  // 減資、變更面額恢復買賣：第一次（還沒有這類資料）從 2013 年補齊，之後只更新這幾年
+  final capFrom = div.capital.isEmpty ? 2013 : fromYear;
+  for (var y = capFrom; y <= toYear; y++) {
+    final end = '$y-12-31'.compareTo(today) > 0 ? today : '$y-12-31';
+    var n = 0;
+    for (final (path, kind) in [('/rwd/zh/reducation/TWTAUU', '減資'), ('/rwd/zh/change/TWTB8U', '面額')]) {
+      final r = await f.json(_twse(path, {'startDate': _compact('$y-01-01'), 'endDate': _compact(end)}));
+      if (r == null) {
+        print('  $y $kind：抓不到');
+        continue;
+      }
+      final ev = parseCapitalChange(r, kind);
+      div.mergeCapital(ev);
+      n += ev.values.fold(0, (s, l) => s + l.length);
+    }
+    print('  $y：減資／變更面額 $n 筆');
+  }
   file.writeAsBytesSync(encodeGz(div.toJson()));
 }
 

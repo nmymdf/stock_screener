@@ -410,16 +410,24 @@ Map<String, dynamic> barsYearJson(PackYear raw) => {
 
 class DividendData {
   final Map<String, List<DivEvent>> byCode;
-  DividendData([Map<String, List<DivEvent>>? byCode]) : byCode = byCode ?? {};
+
+  /// 減資、變更面額恢復買賣（不是股利，只用來把總報酬接起來）。
+  final Map<String, List<DivEvent>> capital;
+  DividendData([Map<String, List<DivEvent>>? byCode, Map<String, List<DivEvent>>? capital])
+    : byCode = byCode ?? {},
+      capital = capital ?? {};
 
   /// 合併新抓的事件（同一天同一檔以新的為準）。
-  void merge(Map<String, List<DivEvent>> add) {
+  void merge(Map<String, List<DivEvent>> add) => _merge(byCode, add);
+  void mergeCapital(Map<String, List<DivEvent>> add) => _merge(capital, add);
+
+  static void _merge(Map<String, List<DivEvent>> into, Map<String, List<DivEvent>> add) {
     for (final e in add.entries) {
-      final m = {for (final x in byCode[e.key] ?? const <DivEvent>[]) x.date: x};
+      final m = {for (final x in into[e.key] ?? const <DivEvent>[]) x.date: x};
       for (final x in e.value) {
         m[x.date] = x;
       }
-      byCode[e.key] = m.values.toList()..sort((a, b) => a.date.compareTo(b.date));
+      into[e.key] = m.values.toList()..sort((a, b) => a.date.compareTo(b.date));
     }
   }
 
@@ -428,12 +436,22 @@ class DividendData {
     'events': {
       for (final e in byCode.entries) e.key: [for (final x in e.value) x.toRow()],
     },
+    if (capital.isNotEmpty)
+      'capital': {
+        for (final e in capital.entries) e.key: [for (final x in e.value) x.toRow()],
+      },
   };
 
-  static DividendData fromJson(Map<String, dynamic> j) => DividendData({
-    for (final e in ((j['events'] as Map?) ?? const {}).entries)
-      e.key as String: [for (final r in e.value as List) DivEvent.fromRow(r as List)],
-  });
+  static DividendData fromJson(Map<String, dynamic> j) => DividendData(
+    {
+      for (final e in ((j['events'] as Map?) ?? const {}).entries)
+        e.key as String: [for (final r in e.value as List) DivEvent.fromRow(r as List)],
+    },
+    {
+      for (final e in ((j['capital'] as Map?) ?? const {}).entries)
+        e.key as String: [for (final r in e.value as List) DivEvent.fromRow(r as List)],
+    },
+  );
 }
 
 class IntlData {
