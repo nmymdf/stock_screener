@@ -260,6 +260,27 @@ Future<void> probe(Fetcher f) async {
     );
   }
   await probeShares(f, _ymd(d));
+  print('\n==== 減資／變更面額恢復買賣 ====');
+  for (final path in ['/rwd/zh/reducation/TWTAUU', '/rwd/zh/change/TWTB8U', '/rwd/zh/split/TWTCAU']) {
+    for (final (a, b) in [('2014-01-01', '2014-12-31'), ('2025-01-01', '2025-12-31')]) {
+      final r = await f.json(_twse(path, {'startDate': _compact(a), 'endDate': _compact(b)}), tries: 1);
+      if (r == null) {
+        print('$path $a：失敗');
+        continue;
+      }
+      final tables = twseTables(r);
+      print('$path $a：stat=${r['stat']} 表格=${tables.length}');
+      for (final (fields, data) in tables) {
+        print('  欄位=$fields（${data.length} 列）');
+        for (final row in data.take(3)) {
+          print('  $row');
+        }
+        for (final row in data.where((x) => x.toString().contains('2408')).take(2)) {
+          print('  2408：$row');
+        }
+      }
+    }
+  }
   print('\n共 ${f.requests} 次請求');
 }
 
