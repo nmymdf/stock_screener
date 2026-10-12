@@ -8,6 +8,7 @@
 //   dart run tool/datapack.dart assemble --dir pack         # 產生 App 用的 lt-/bars-/recent、manifest.json
 //   dart run tool/datapack.dart daily --dir pack            # 每天收盤後：補今年、營收、股利、國際、組裝
 //   dart run tool/datapack.dart research --dir pack         # 用資料包跑長期回測，印出結果
+//   dart run tool/datapack.dart shares --dir pack           # 每月一天的發行股數（算市值用，研究中）
 //
 // 證交所對太密集的請求會暫時封鎖，每個網站兩次請求之間至少隔 2.5 秒。
 // ignore_for_file: avoid_print
@@ -51,6 +52,8 @@ Future<void> main(List<String> argv) async {
         await daily(f, dir);
       case 'research':
         research(dir);
+      case 'shares':
+        await updateShares(f, dir, fromYear: int.parse(args.get('from') ?? '2013'));
       default:
         print('不認得的指令：$cmd');
         exit(64);
@@ -775,4 +778,53 @@ Future<void> daily(Fetcher f, Directory dir) async {
 void research(Directory dir) {
   final report = runPackResearch(dir.path);
   print(report);
+}
+
+// ───────────────────────────── 發行股數（研究中） ─────────────────────────────
+
+/// 每個月 11 日以後第一個交易日（跟長期分析的檢視日同一天）的發行股數，存成 shares.json.gz：
+/// {"v":1,"m":{"2024-05":{"d":"2024-05-13","s":{"2330":25932370067,...}}}}。已經有的月份不重抓（當月除外）。
+Future<void> updateShares(Fetcher f, Directory dir, {int fromYear = 2013}) async {
+  final file = File('${dir.path}/shares.json.gz');
+  final j = file.existsSync() ? decodeGz(file.readAsBytesSync()) : <String, dynamic>{'v': 1, 'm': <String, dynamic>{}};
+  final months = (j['m'] as Map).cast<String, dynamic>();
+  final now = _taipeiNow();
+  final today = DateTime.utc(now.year, now.month, now.day);
+  final thisMonth = '${now.year}-${now.month.toString().padLeft(2, '0')}';
+  var fetched = 0, fails = 0;
+  for (var y = fromYear; y <= now.year; y++) {
+    for (var m = 1; m <= 12; m++) {
+      final key = '$y-${m.toString().padLeft(2, '0')}';
+      if (key.compareTo(thisMonth) > 0) break;
+      if (months.containsKey(key) && key != thisMonth) continue;
+      var got = false;
+      for (var d = 11; d <= 25 && !got; d++) {
+        final day = DateTime.utc(y, m, d);
+        if (day.isAfter(today)) break;
+        if (day.weekday > 5) continue;
+        final date = _ymd(day);
+        final body = await f.json(_twse('/rwd/zh/fund/MI_QFIIS', {'date': _compact(date), 'selectType': 'ALLBUT0999'}));
+        if (body == null) {
+          fails++;
+          print('$date：抓不到（之後再補）');
+          break;
+        }
+        if (_twseNoData(body)) continue; // 休市
+        final sh = parseQfiisShares(body);
+        if (sh.length < 200) continue;
+        months[key] = {'d': date, 's': sh};
+        got = true;
+        fetched++;
+        print('$key：$date ${sh.length} 檔，2330=${sh['2330']}');
+      }
+      if (fetched > 0 && fetched % 12 == 0) file.writeAsBytesSync(encodeGz({'v': 1, 'm': months}));
+      if (fails >= 3) {
+        print('連續失敗太多次，先停在 $key，已經抓到的存起來');
+        file.writeAsBytesSync(encodeGz({'v': 1, 'm': months}));
+        exit(fetched > 0 ? 0 : 1);
+      }
+    }
+  }
+  file.writeAsBytesSync(encodeGz({'v': 1, 'm': months}));
+  print('發行股數：共 ${months.length} 個月，這次新抓 $fetched 個月');
 }

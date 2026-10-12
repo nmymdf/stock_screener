@@ -29,6 +29,27 @@ void main() {
     expect(parseTaiexTotalReturn(body), closeTo(45678.90, 1e-6));
   });
 
+  test('MI_QFIIS 發行股數：新舊欄位都認，只留普通股', () {
+    final sh = parseQfiisShares({
+      'stat': 'OK',
+      'fields': ['證券代號', '證券名稱', '國際證券編碼', '發行股數', '外資及陸資尚可投資股數'],
+      'data': [
+        ['2330', '台積電', 'TW0002330008', '25,932,370,067', '1'],
+        ['0050', '元大台灣50', 'TW0000050004', '1,000,000', '1'],
+        ['2317', '鴻海', 'TW0002317005', '-', '1'],
+      ],
+    });
+    expect(sh, {'2330': 25932370067});
+    final old = parseQfiisShares({
+      'stat': 'OK',
+      'fields': ['證券代號', '證券名稱', '國際證券編碼', '發行股數', '外資尚可投資股數'],
+      'data': [
+        ['1101', '台泥', 'TW0001101004', '3,690,000,000', '1'],
+      ],
+    });
+    expect(old['1101'], 3690000000);
+  });
+
   test('BWIBBU_d 新舊欄位都認，「-」是 null', () {
     final newer = parseBwibbu({
       'stat': 'OK',

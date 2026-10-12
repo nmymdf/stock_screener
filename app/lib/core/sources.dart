@@ -10,6 +10,8 @@
 /// 欄位位置交易所改過好幾次，所以一律用欄位名稱找欄位。
 library;
 
+import 'dart:math' as math;
+
 import '../services/history_service.dart' show twseTables;
 import '../services/quote_service.dart' show parseNum;
 
@@ -313,4 +315,22 @@ class IntlSeries {
     v.add(c.toDouble());
   }
   return (d, v);
+}
+
+/// 外資及陸資持股統計（MI_QFIIS）裡每檔的「發行股數」→ 代號 → 股數（只留普通股）。
+/// 用來算市值（股數 × 收盤價）；這份表每個交易日都有，2008 年以前的欄位名稱略有不同。
+Map<String, int> parseQfiisShares(Map<String, dynamic> body) {
+  final out = <String, int>{};
+  for (final (fields, data) in twseTables(body)) {
+    final ci = fields.indexWhere((x) => x.contains('代號'));
+    final si = fields.indexWhere((x) => x.contains('發行股數'));
+    if (ci < 0 || si < 0) continue;
+    for (final r in data) {
+      if (r.length <= math.max(ci, si)) continue;
+      final code = r[ci].toString().trim();
+      final v = int.tryParse(r[si].toString().replaceAll(',', '').trim());
+      if (v != null && v > 0 && isCommonStockCode(code)) out[code] = v;
+    }
+  }
+  return out;
 }
