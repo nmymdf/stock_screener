@@ -1,7 +1,7 @@
 /// 「組合」：長期投資的主畫面。
 ///
-/// - 理想組合：不管手上有什麼，照規則該持有的 10～15 檔、各配多少（跟回測同一套規則，
-///   所以回測的成績就是這個組合過去的成績）。
+/// - 核心＋選股：預設一半放大盤核心（0050），另一半是照規則該持有的 10～15 檔選股名單、各配多少
+///   （跟回測同一套規則，所以回測的成績就是這個組合過去的成績）。
 /// - 依我的持股汰弱留強：看手上每一檔還值不值得抱，一個月最多換幾檔、換成更強的。
 library;
 
@@ -22,6 +22,7 @@ import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/lt_widgets.dart';
 import '../widgets/score_widgets.dart';
+import '../widgets/scorecard_card.dart';
 import 'stock_report_screen.dart';
 
 class PortfolioScreen extends StatefulWidget {
@@ -43,7 +44,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
         PageHeader(
           icon: Icons.pie_chart_outline,
           title: '組合',
-          subtitle: '長期投資：每月檢視一次、汰弱留強，不追高、不殺低',
+          subtitle: '長期投資：大盤核心＋選股名單，每月檢視一次、汰弱留強，不追高、不殺低',
           trailing: lt.result == null
               ? null
               : Text('資料到 ${lt.result!.date}', style: Theme.of(context).textTheme.bodySmall),
@@ -62,7 +63,7 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
               Center(
                 child: SegmentedButton<int>(
                   segments: const [
-                    ButtonSegment(value: 0, icon: Icon(Icons.auto_awesome_outlined), label: Text('理想組合')),
+                    ButtonSegment(value: 0, icon: Icon(Icons.auto_awesome_outlined), label: Text('核心＋選股')),
                     ButtonSegment(value: 1, icon: Icon(Icons.swap_horiz), label: Text('依我的持股汰弱留強')),
                   ],
                   selected: {_mode},
@@ -105,7 +106,7 @@ class _IdealView extends StatelessWidget {
     ].take(15).toList();
     final left = <Widget>[
       SectionCard(
-        title: core > 0 ? '大盤核心＋選股 ${hold.length} 檔' : '策略目前持有 ${hold.length} 檔',
+        title: core > 0 ? '大盤核心 ${pc(core)}＋選股名單 ${hold.length} 檔' : '選股名單 ${hold.length} 檔',
         trailing: Text(
           '${core > 0 ? '大盤 ${pc(core)}・' : ''}選股 ${pc((1 - core) * (1 - math.max(0.0, sim.cashWeight)))}・現金 ${pc((1 - core) * math.max(0.0, sim.cashWeight))}',
           style: Theme.of(context).textTheme.bodySmall,
@@ -115,9 +116,20 @@ class _IdealView extends StatelessWidget {
           children: [
             Text(
               '照同一套規則從 ${s.from} 開始操作到今天：年化 ${sp(s.cagr)}（同期$bench ${sp(s.benchCagr)}），'
-              '${s.yearRows.length} 年中有 ${s.yearRows.where((y) => y.beat).length} 年贏指數，最大跌幅 ${pc(s.mdd)}；'
+              '最大跌幅 ${pc(s.mdd)}（大盤 ${pc(s.benchMdd)}）；'
               '每筆持股平均抱 ${(s.avgHoldDays / 21).toStringAsFixed(1)} 個月，${pc(s.posWin)} 賣出時是賺錢的。',
               style: const TextStyle(fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '成績單：${scorecardSummary(r.scorecard)}'
+              '${core > 0 ? '選股名單只是衛星，大盤核心負責跟上大盤。' : '建議搭配大盤核心（回測頁可以設定）。'}',
+              style: const TextStyle(fontSize: 13, height: 1.4),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '這份名單適用到下次檢視日（${nextReviewText(r.date!)}）；分數的效力大約 3～6 個月，要每月看一次，不要買了就放著不管。',
+              style: Theme.of(context).textTheme.bodySmall,
             ),
             Wrap(
               spacing: 8,
@@ -125,7 +137,10 @@ class _IdealView extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 const _CapitalField(),
-                TextButton(onPressed: () => HomeShell.goTo(context, HomeShell.backtest), child: const Text('看完整回測 →')),
+                TextButton(
+                  onPressed: () => HomeShell.goTo(context, HomeShell.backtest),
+                  child: const Text('看成績單和完整回測 →'),
+                ),
               ],
             ),
             const Divider(height: 8),
@@ -192,6 +207,7 @@ class _IdealView extends StatelessWidget {
           '續抱：總分還在前 30% 就不動；至少抱 3 個月，除非長期理由破壞（年線下彎又營收衰退、虧損又轉弱、或掉到後 15%）。',
           '每月最多換 5 檔，換上去的要明顯更強；單一檔最多 15%、單一產業最多 30%。',
           '權重：分數越高、波動越低的配越多。',
+          '角色：大盤核心負責跟上大盤；選股名單是衛星，目標是少跌、避開地雷、多賺一點點，不保證每次贏大盤。',
         ], BulletKind.info),
       ),
     ];
@@ -403,6 +419,7 @@ class _SwapView extends StatelessWidget {
               ),
               Text(
                 '手上 ${inputs.length} 檔：續抱 $keep、觀察 $watch、建議汰換 ${adv.replaceCount}'
+                '${groups[SwapAction.core] == null ? '' : '、大盤核心 ${groups[SwapAction.core]!.length}'}'
                 '${groups[SwapAction.notRated] == null ? '' : '、不在評分範圍 ${groups[SwapAction.notRated]!.length}'}。'
                 '不全面換股：只換長期理由已經破壞、或排名落到後段又抱超過 3 個月的，而且換上去的要明顯更強。',
                 style: const TextStyle(fontSize: 13, height: 1.4),
@@ -411,7 +428,13 @@ class _SwapView extends StatelessWidget {
             ],
           ),
         ),
-        for (final a in const [SwapAction.replace, SwapAction.watch, SwapAction.keep, SwapAction.notRated])
+        for (final a in const [
+          SwapAction.replace,
+          SwapAction.watch,
+          SwapAction.keep,
+          SwapAction.core,
+          SwapAction.notRated,
+        ])
           if (groups[a] != null) ...[
             SectionHeader(left: '${a.label}（${groups[a]!.length}）'),
             Card(
@@ -435,6 +458,7 @@ Color swapColor(SwapAction a) => switch (a) {
   SwapAction.replace => const Color(0xFFD32F2F),
   SwapAction.watch => const Color(0xFFC98A00),
   SwapAction.keep => const Color(0xFF2E7D32),
+  SwapAction.core => const Color(0xFF1565C0),
   SwapAction.notRated => Colors.grey,
 };
 
@@ -578,26 +602,32 @@ class _CoreRow extends StatelessWidget {
   const _CoreRow({required this.weight});
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 56,
-          child: Text(pc(weight, 1), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+  Widget build(BuildContext context) {
+    final bars = context.read<HistoryStore>().rawSeriesOf('0050');
+    return InkWell(
+      onTap: () => _openStock(context, '0050'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 56,
+              child: Text(pc(weight, 1), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('0050 元大台灣50（大盤核心）', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                  Text('市值型 ETF，跟著大盤（含台積電等大型股）走；長期抱著，每月檢視時調回這個比例，不用選股', style: Theme.of(context).textTheme.bodySmall),
+                  _Amount(weight: weight, price: bars.isEmpty ? null : bars.last.close),
+                ],
+              ),
+            ),
+          ],
         ),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('大盤核心：0050 或 006208', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-              Text('市值型 ETF，跟著加權指數（含台積電等大型股）走；每月檢視時調回這個比例，不用選股', style: Theme.of(context).textTheme.bodySmall),
-              _Amount(weight: weight, price: null),
-            ],
-          ),
-        ),
-      ],
-    ),
-  );
+      ),
+    );
+  }
 }

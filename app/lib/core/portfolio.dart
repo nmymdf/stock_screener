@@ -40,8 +40,9 @@ class LtConfig {
   /// 新買進的最低流動性：近 60 日平均每天成交值（百萬元）。
   final double minValue;
 
-  /// 大盤核心比例：這部分放市值型 ETF（0050／006208），用加權報酬指數扣 0.3% 年費模擬；
-  /// 其餘才是選股。每月檢視日調回目標比例。
+  /// 大盤核心比例：這部分放市值型 ETF（0050），用加權報酬指數扣 0.3% 年費模擬；
+  /// 其餘才是選股。每月檢視日調回目標比例。預設 50%：選股的優勢很小，大盤（尤其台積電）
+  /// 大漲時全部選股很容易落後，一半放大盤可以接近大盤的報酬、又保留選股少跌的好處。
   final double coreWeight;
 
   /// 只從成交值最大的 N 檔裡挑（0 = 不限）；這時「新買」改成這 N 檔裡總分前 [universeBuyFrac]。
@@ -49,7 +50,7 @@ class LtConfig {
   final double universeBuyFrac;
 
   const LtConfig({
-    this.coreWeight = 0,
+    this.coreWeight = 0.5,
     this.universeTop = 0,
     this.universeBuyFrac = 0.2,
     this.skipOverheat = true,
@@ -790,13 +791,17 @@ class HoldingInput {
   const HoldingInput(this.code, this.name, this.value, this.since);
 }
 
-enum SwapAction { keep, watch, replace, notRated }
+enum SwapAction { keep, watch, replace, core, notRated }
+
+/// 算「大盤核心」的市值型 ETF（追蹤台灣 50）。
+const coreEtfCodes = {'0050', '006208'};
 
 extension SwapActionInfo on SwapAction {
   String get label => switch (this) {
     SwapAction.keep => '續抱',
     SwapAction.watch => '觀察',
     SwapAction.replace => '建議汰換',
+    SwapAction.core => '大盤核心',
     SwapAction.notRated => '不在評分範圍',
   };
 }
@@ -828,6 +833,9 @@ SwapAdvice swapAdvice(
   LtConfig cfg = const LtConfig(),
 }) {
   final total = holdings.fold(0.0, (a, h) => a + h.value);
+  final coreValue = holdings.where((h) => coreEtfCodes.contains(h.code)).fold(0.0, (a, h) => a + h.value);
+  // 單一檔、產業上限都是對「選股部位」（扣掉大盤核心）算的
+  final stockTotal = total - coreValue;
   final today = sc.date;
   int daysHeld(String? since) {
     if (since == null) return 9999;
@@ -839,12 +847,19 @@ SwapAdvice swapAdvice(
   final replace = <(int, LtScore, HoldingInput, List<String>, double)>[];
   final indWeight = <String, double>{};
   for (final h in holdings) {
-    indWeight[industryKey(h.code)] = (indWeight[industryKey(h.code)] ?? 0) + (total > 0 ? h.value / total : 0);
+    if (coreEtfCodes.contains(h.code)) continue;
+    indWeight[industryKey(h.code)] =
+        (indWeight[industryKey(h.code)] ?? 0) + (stockTotal > 0 ? h.value / stockTotal : 0);
   }
   final heldCodes = {for (final h in holdings) h.code};
   for (var i = 0; i < holdings.length; i++) {
     final h = holdings[i];
     final w = total > 0 ? h.value / total : 0.0;
+    final ws = stockTotal > 0 ? h.value / stockTotal : 0.0;
+    if (coreEtfCodes.contains(h.code)) {
+      rows.add(SwapRow(h, null, SwapAction.core, ['市值型 ETF，算在大盤核心，長期抱著、不做個股汰換'], w, const []));
+      continue;
+    }
     final si = data.index[h.code];
     final x = si == null ? null : sc.of(si);
     if (x == null) {
@@ -880,7 +895,9 @@ SwapAdvice swapAdvice(
       action = SwapAction.keep;
       reasons.add('總分第 ${x.rank} 名（前 ${((1 - x.pct) * 100).toStringAsFixed(0)}%），長期理由還在');
     }
-    if (w > cfg.maxWeight) reasons.add('佔持股 ${(w * 100).toStringAsFixed(0)}%，超過單一檔 15% 的上限，可考慮分批調節');
+    if (ws > cfg.maxWeight) {
+      reasons.add('佔選股部位 ${(ws * 100).toStringAsFixed(0)}%，超過單一檔 ${(cfg.maxWeight * 100).round()}% 的上限，可考慮分批調節');
+    }
     if (action == SwapAction.replace) {
       replace.add((i, x, h, reasons, w));
       rows.add(SwapRow(h, x, action, reasons, w, const [])); // 先佔位，下面補候選
@@ -912,7 +929,8 @@ SwapAdvice swapAdvice(
         continue;
       }
       final ci = industryKey(c.code);
-      final after = (indWeight[ci] ?? 0) + w - (ci == myInd ? w : 0);
+      final ws = stockTotal > 0 ? h.value / stockTotal : 0.0;
+      final after = (indWeight[ci] ?? 0) + ws - (ci == myInd ? ws : 0);
       if (after > cfg.maxIndustry + 1e-9) continue;
       if (cands.isEmpty && used.contains(c.code)) continue; // 第一推薦不重複
       cands.add(c);
@@ -923,9 +941,22 @@ SwapAdvice swapAdvice(
   final notes = <String>[];
   for (final e in indWeight.entries) {
     if (e.value > cfg.maxIndustry + 1e-9 && !e.key.startsWith('其他:')) {
-      notes.add('「${e.key}」佔持股 ${(e.value * 100).toStringAsFixed(0)}%，超過單一產業 30% 的上限，新買進時避開這個產業');
+      notes.add('「${e.key}」佔選股部位 ${(e.value * 100).toStringAsFixed(0)}%，超過單一產業 30% 的上限，新買進時避開這個產業');
     }
   }
-  if (holdings.length < 8) notes.add('目前只有 ${holdings.length} 檔，長期組合建議 10～15 檔分散風險');
+  final stocks = holdings.where((h) => !coreEtfCodes.contains(h.code)).length;
+  if (stocks > 0 && stocks < 8) notes.add('選股只有 $stocks 檔，建議 10～15 檔分散風險');
+  final coreNote = coreAdvice(total > 0 ? coreValue / total : 0, cfg.coreWeight, total);
+  if (coreNote != null) notes.insert(0, coreNote);
   return SwapAdvice(rows, notes, maxSwaps);
+}
+
+/// 大盤核心比例跟設定差太多（超過 10 個百分點）時的提醒；不用一次調完。
+String? coreAdvice(double actual, double target, double total) {
+  if (target <= 0 && actual <= 0) return null;
+  final gap = target - actual;
+  if (gap.abs() <= 0.10) return null;
+  final money = (gap.abs() * total / 10000).toStringAsFixed(0);
+  final now = '大盤核心（0050／006208）目前佔 ${(actual * 100).round()}%，設定是 ${(target * 100).round()}%';
+  return gap > 0 ? '$now，少了約 $money 萬。不用一次補齊：新投入的錢、汰換賣出的錢先買 0050，慢慢調回。' : '$now，多了約 $money 萬。不用急著賣：新投入的錢先放選股，慢慢調回。';
 }

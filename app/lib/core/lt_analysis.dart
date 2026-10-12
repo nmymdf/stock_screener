@@ -10,6 +10,7 @@ import 'lt_data.dart';
 import 'pack.dart';
 import 'portfolio.dart';
 import 'research.dart';
+import 'scorecard.dart';
 
 /// 從資料夾讀資料包：lt-YYYY（各年）、recent（最近 30 天）、營收、除權息、國際指標。
 /// [extraDays] 是資料包之後的日子（例如 App 今天直接抓到的收盤），依日期接在最後面。
@@ -84,6 +85,9 @@ class LtResult {
 
   /// 現在如果檢視一次會怎麼調整（今天不是檢視日時，給參考）。
   final LtDecision? preview;
+
+  /// 選股名單成績單：過去每個月的名單抱 3、6 個月有沒有贏大盤。
+  final Scorecard scorecard;
   final Duration elapsed;
 
   const LtResult({
@@ -95,6 +99,7 @@ class LtResult {
     required this.variants,
     required this.research,
     required this.preview,
+    required this.scorecard,
     required this.elapsed,
   });
 
@@ -143,6 +148,7 @@ LtResult runLtAnalysis(LtData data, {LtConfig cfg = const LtConfig(), bool varia
       ('全部選股（沒有大盤核心）', cfg.copyWith(coreWeight: 0)),
       ('大盤核心 30%＋選股 70%', cfg.copyWith(coreWeight: 0.3)),
       ('大盤核心 50%＋選股 50%', cfg.copyWith(coreWeight: 0.5)),
+      ('大盤核心 70%＋選股 30%', cfg.copyWith(coreWeight: 0.7)),
     ]) {
       if (c.exposure == cfg.exposure &&
           c.size == cfg.size &&
@@ -171,6 +177,7 @@ LtResult runLtAnalysis(LtData data, {LtConfig cfg = const LtConfig(), bool varia
     variants: out,
     research: research,
     preview: preview,
+    scorecard: buildScorecard(data, book, sim),
     elapsed: sw.elapsed,
   );
 }

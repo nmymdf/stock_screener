@@ -247,7 +247,7 @@ class _CompareScreenState extends State<CompareScreen> {
               if (holdings.isNotEmpty)
                 ActionChip(label: const Text('我的持股'), onPressed: () => _add(holdings.take(kCompareMax).toList())),
               if (ideal.isNotEmpty)
-                ActionChip(label: const Text('理想組合前 5'), onPressed: () => _add(ideal.take(5).toList())),
+                ActionChip(label: const Text('選股名單前 5'), onPressed: () => _add(ideal.take(5).toList())),
               if (a.recommendations.isNotEmpty)
                 ActionChip(
                   label: const Text('短線訊號前 5'),
@@ -285,7 +285,7 @@ class _Help extends StatelessWidget {
     child: Bullets([
       '輸入一檔（例如 2330）：看白話的現況總覽——趨勢、位置、動能、量價、相對強度、產業與市場、關鍵價位、現在適不適合買。',
       '輸入多檔（例如 2330 2317 2454）：系統排出綜合順序，說明誰短線最強、誰中長期最好、誰波動最小、誰有進場訊號，並畫出相對走勢、列出逐項比較表（每一列最好的會標出來）。',
-      '可以一次輸入多檔，用空白、逗號分開；也可以用「快速加入」把持股、理想組合、短線訊號、同業一次加進來。',
+      '可以一次輸入多檔，用空白、逗號分開；也可以用「快速加入」把持股、選股名單、短線訊號、同業一次加進來。',
       '比較清單會記住，下次打開還在。點股票標籤可以看完整的個股報告。',
     ], BulletKind.info),
   );

@@ -93,7 +93,7 @@ class _LtHeader extends StatelessWidget {
                       Text(rankText(s, total), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
                       const SizedBox(height: 2),
                       Text(
-                        [?ind, if (held) '在理想組合裡', if (s.pct >= 0.9 && !held) '前 10%：可以列入候選'].join('・'),
+                        [?ind, if (held) '在選股名單裡', if (s.pct >= 0.9 && !held) '前 10%：可以列入候選'].join('・'),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       if (s.flags.isNotEmpty) ...[const SizedBox(height: 4), LtFlagTags(s.flags, showIlliquid: true)],

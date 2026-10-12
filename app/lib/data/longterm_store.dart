@@ -58,7 +58,10 @@ class LongTermStore extends ChangeNotifier {
           size: (j['size'] as num?)?.toInt(),
           maxChanges: (j['maxChanges'] as num?)?.toInt(),
           exposure: ExposureMode.values.where((m) => m.name == j['exposure']).firstOrNull,
-          coreWeight: (j['coreWeight'] as num?)?.toDouble(),
+          // v2.1 起預設大盤核心 50%；舊版存的 0 是當時的預設值，不是自己選的，改用新預設
+          coreWeight: (j['v'] as num? ?? 1) >= 2 || (j['coreWeight'] as num? ?? 0) > 0
+              ? (j['coreWeight'] as num?)?.toDouble()
+              : null,
         );
         maxSwaps = (j['maxSwaps'] as num?)?.toInt() ?? maxSwaps;
         capital = (j['capital'] as num?)?.toDouble();
@@ -89,6 +92,7 @@ class LongTermStore extends ChangeNotifier {
   }
 
   Future<void> _save() => _store.writeNamed(fileName, {
+    'v': 2,
     'size': cfg.size,
     'maxChanges': cfg.maxChanges,
     'exposure': cfg.exposure.name,

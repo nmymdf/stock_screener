@@ -127,8 +127,22 @@ void main() {
     }
     expect(adv.rows.firstWhere((r) => r.holding.code == strong.code).action, SwapAction.keep);
     expect(adv.rows.firstWhere((r) => r.holding.code == '6488').action, SwapAction.notRated);
-    expect(adv.rows.firstWhere((r) => r.holding.code == '0050').action, SwapAction.notRated);
+    expect(adv.rows.firstWhere((r) => r.holding.code == '0050').action, SwapAction.core);
     expect(adv.rows.where((r) => r.reasons.any((x) => x.contains('換股已達'))).length, 3);
+    // 0050 只佔 50 萬／700 萬 ≈ 7%，設定 50% → 提醒慢慢補，不是一次換
+    expect(adv.notes.first, contains('大盤核心'));
+    expect(adv.notes.first, contains('慢慢調回'));
+  });
+
+  test('大盤核心：預設 50%，差不到 10 個百分點不提醒', () {
+    expect(const LtConfig().coreWeight, 0.5);
+    expect(coreAdvice(0.45, 0.5, 1e6), isNull);
+    expect(coreAdvice(0.2, 0.5, 1e6), contains('少了約 30 萬'));
+    expect(coreAdvice(0.8, 0.5, 1e6), contains('多了約 30 萬'));
+    expect(coreAdvice(0, 0, 1e6), isNull);
+    final noCore = result.variants.firstWhere((v) => v.label.contains('沒有大盤核心'));
+    expect(noCore.cfg.coreWeight, 0);
+    expect(result.variants.any((v) => v.label.contains('70%')), isTrue);
   });
 
   test('因子研究與文字報告', () {
@@ -137,7 +151,35 @@ void main() {
     final text = runPackResearch(dir.path);
     expect(text, contains('年化報酬'));
     expect(text, contains('因子研究'));
-    expect(text, contains('理想組合'));
+    expect(text, contains('選股名單'));
+    expect(text, contains('成績單'));
+  });
+
+  test('選股名單成績單：每個檢視日重新選一次，抱 3、6 個月跟大盤比', () {
+    final sc = result.scorecard;
+    expect(sc.size, 15);
+    final h3 = sc.of(63)!, h6 = sc.of(126)!;
+    expect(h3.n, greaterThan(20));
+    expect(h6.n, lessThan(h3.n));
+    for (final r in h3.rows) {
+      expect(r.codes.length, inInclusiveRange(1, 15));
+      expect(r.days, 63);
+      expect(r.stockWins, lessThanOrEqualTo(r.codes.length));
+    }
+    expect(h3.winRate, inInclusiveRange(0, 1));
+    expect(h3.upRows.length + h3.downRows.length, h3.n);
+    expect(h3.years.fold(0, (a, y) => a + y.n), h3.n);
+    // 第一次的名單就是回測第一次建立的組合
+    final first = result.sim.rebalances.first;
+    expect(h3.rows.first.date, first.date);
+    expect(
+      h3.rows.first.codes.toSet(),
+      first.trades.where((t) => t.buy && t.code.isNotEmpty).map((t) => t.code).toSet(),
+    );
+    // 還沒滿 3 個月的列在進行中
+    for (final r in sc.inProgress) {
+      expect(r.days, lessThan(63));
+    }
   });
 
   test('分數走勢：每個檢視日的百分位', () {

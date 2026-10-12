@@ -211,7 +211,10 @@ void main() {
     expect(app.longTerm.result, isNotNull);
     await tester.pumpWidget(app);
     await tester.pumpAndSettle();
-    expect(find.textContaining('策略目前持有'), findsOneWidget);
+    expect(find.textContaining('選股名單 '), findsOneWidget);
+    expect(find.text('0050 元大台灣50（大盤核心）'), findsOneWidget);
+    expect(find.textContaining('成績單：過去'), findsOneWidget);
+    expect(find.textContaining('這份名單適用到下次檢視日'), findsOneWidget);
     expect(find.text('候補名單'), findsOneWidget);
     expect(find.textContaining('市場環境：'), findsOneWidget);
 
@@ -220,6 +223,10 @@ void main() {
     expect(find.text('因子研究：分數高的股票之後真的比較好嗎？'), findsOneWidget);
     expect(find.text('不同設定比較'), findsOneWidget);
     expect(find.text('逐年'), findsOneWidget);
+    expect(find.text('選股名單成績單'), findsOneWidget);
+    expect(find.textContaining('贏大盤 '), findsWidgets);
+    expect(find.textContaining('長期報酬接近大盤'), findsOneWidget);
+    expect(find.textContaining('不買到地雷'), findsOneWidget);
 
     await tester.tap(find.text('市場').first);
     await tester.pumpAndSettle();
@@ -336,7 +343,7 @@ void main() {
     }
     await tester.tap(find.byIcon(Icons.pie_chart_outline).last);
     await tester.pump();
-    expect(find.textContaining('策略目前持有'), findsOneWidget);
+    expect(find.textContaining('選股名單 '), findsOneWidget);
     await tester.tap(find.text('依我的持股汰弱留強'));
     await tester.pump();
     Navigator.of(tester.element(find.byType(HomeShell)))

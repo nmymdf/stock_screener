@@ -20,6 +20,7 @@ import '../theme.dart';
 import '../widgets/charts.dart';
 import '../widgets/common.dart';
 import '../widgets/lt_widgets.dart';
+import '../widgets/scorecard_card.dart';
 import '../widgets/score_widgets.dart';
 import 'stock_report_screen.dart';
 
@@ -41,6 +42,7 @@ class BacktestScreen extends StatelessWidget {
               _Settings(lt: lt),
               if (lt.analyzing) const LinearProgressIndicator(),
               _Verdict(r: r),
+              ScorecardCard(sc: r.scorecard),
               SplitView(
                 left: [
                   _NavChart(r: r),
@@ -209,7 +211,7 @@ class _Settings extends StatelessWidget {
             for (final m in ExposureMode.values) (m, m.label),
           ], (v) => lt.setConfig(exposure: v)),
           dd('大盤核心 ETF', lt.cfg.coreWeight, [
-            for (final w in const [0.0, 0.3, 0.5]) (w, w == 0 ? '不放' : '${(w * 100).round()}%'),
+            for (final w in const [0.0, 0.3, 0.5, 0.7]) (w, w == 0 ? '不放' : '${(w * 100).round()}%'),
           ], (v) => lt.setConfig(coreWeight: v)),
         ],
       ),
@@ -225,13 +227,20 @@ class _Verdict extends StatelessWidget {
   Widget build(BuildContext context) {
     final s = r.sim.stats;
     final beatYears = s.yearRows.where((y) => y.beat).length;
-    final good = s.excessCagr > 0.02 && s.yearlyWin >= 0.6;
-    final ok = s.excessCagr > 0;
-    final (label, color, icon) = good
-        ? ('長期勝過大盤', AppColors.up, Icons.thumb_up_alt_outlined)
-        : ok
-        ? ('小幅勝過大盤', const Color(0xFFC98A00), Icons.trending_flat)
-        : ('沒有勝過大盤', const Color(0xFF5B8DB8), Icons.thumb_down_alt_outlined);
+    // 三個目標：報酬接近大盤、跌得比大盤少、不買到地雷
+    final closed = r.sim.episodes.where((e) => !e.open).toList();
+    final bigLoss = closed.where((e) => e.ret < -0.3).length;
+    final goals = [
+      ('長期報酬接近大盤（年化差 3% 以內）', s.excessCagr >= -0.03, '年化 ${sp(s.excessCagr)}'),
+      ('最大跌幅明顯比大盤小', s.mdd <= s.benchMdd * 0.8, '${pc(s.mdd)} 對 ${pc(s.benchMdd)}'),
+      ('不買到地雷（賠超過 30% 的持股 5% 以內）', closed.isEmpty || bigLoss / closed.length <= 0.05, '${closed.length} 筆中 $bigLoss 筆'),
+    ];
+    final met = goals.where((g) => g.$2).length;
+    final (label, color, icon) = met == 3
+        ? ('三個目標都達成', AppColors.up, Icons.thumb_up_alt_outlined)
+        : met == 2
+        ? ('達成兩個目標', const Color(0xFFC98A00), Icons.trending_flat)
+        : ('達成 $met 個目標', const Color(0xFF5B8DB8), Icons.thumb_down_alt_outlined);
     final bench = r.sim.benchIsTri ? '加權報酬指數（含息）' : '加權指數（不含息，基準被低估）';
     final money = 1000000 * (1 + s.totalRet);
     final benchMoney = 1000000 * (1 + s.benchTotal);
@@ -262,12 +271,25 @@ class _Verdict extends StatelessWidget {
                 Text('${s.from} ～ ${s.to}', style: Theme.of(context).textTheme.bodySmall),
               ],
             ),
+            const SizedBox(height: 6),
+            for (final (text, ok, detail) in goals)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(ok ? Icons.check_circle : Icons.cancel, size: 18, color: ok ? AppColors.up : AppColors.down),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text('$text：$detail', style: const TextStyle(fontSize: 13.5))),
+                  ],
+                ),
+              ),
             const SizedBox(height: 8),
             if (r.sim.cfg.coreWeight > 0)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
-                  '（大盤核心 ${pc(r.sim.cfg.coreWeight)} 放 0050／006208、其餘選股，每月調回比例）',
+                  '（大盤核心 ${pc(r.sim.cfg.coreWeight)} 放 0050、其餘選股，每月調回比例）',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),

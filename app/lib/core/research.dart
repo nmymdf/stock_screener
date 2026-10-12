@@ -265,12 +265,22 @@ String runPackResearch(String dir) {
       );
     }
   }
+  final card = r.scorecard;
+  sb.writeln('\n── 選股名單成績單（每次 ${card.size} 檔，只看選股部分，不扣成本）──');
+  for (final h in card.horizons) {
+    sb.writeln(
+      '抱${h.label}（${h.n} 次）：贏大盤 ${(h.winRate * 100).round()}%　平均 ${_p(h.avgExcess)}（中位數 ${_p(h.medianExcess)}）　'
+      '大盤漲時贏 ${(h.upWin * 100).round()}%、跌時贏 ${(h.downWin * 100).round()}%　'
+      '贏平均股票 ${(h.vsAvgWin * 100).round()}%　單一檔贏大盤 ${(h.stockWinRate * 100).round()}%　最近 12 次 ${(h.recentWinRate(12) * 100).round()}%',
+    );
+    sb.writeln('  逐年：${h.years.map((y) => '${y.year} ${(y.winRate * 100).round()}%').join('　')}');
+  }
   sb.writeln('\n── 最新（${r.date}）──');
   sb.writeln('市場：${r.exposure.label}；${r.exposure.reasons.join('；')}');
   for (final x in r.exposure.intl) {
     sb.writeln('  ${x.risk ? '⚠' : '・'} ${x.note}');
   }
-  sb.writeln('理想組合（目前持有 ${r.sim.holdings.length} 檔，現金 ${(r.sim.cashWeight * 100).toStringAsFixed(0)}%）：');
+  sb.writeln('選股名單（目前持有 ${r.sim.holdings.length} 檔，現金 ${(r.sim.cashWeight * 100).toStringAsFixed(0)}%）：');
   final hold = r.sim.holdings.entries.toList()..sort((a, b) => b.value.$1.compareTo(a.value.$1));
   for (final e in hold) {
     final st = data.stocks[e.key];
