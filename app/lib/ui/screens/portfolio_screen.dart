@@ -1,15 +1,14 @@
 /// 「組合」：長期投資的主畫面。
 ///
-/// - 核心＋選股：預設一半放大盤核心（0050），另一半是照規則該持有的 10～15 檔選股名單、各配多少
-///   （跟回測同一套規則，所以回測的成績就是這個組合過去的成績）。
-/// - 依我的持股汰弱留強：看手上每一檔還值不值得抱，一個月最多換幾檔、換成更強的。
+/// - 大型股避雷組合：照市值持有台股最大的 30 家公司，把有地雷的拿掉；單一檔最多 40%，
+///   太小的部位放 0050。不預測誰會漲最多（用真實資料檢驗過，全市場挑贏家沒有比較好）。
+/// - 依我的持股調整：手上每一檔在不在組合裡、有沒有地雷，一個月最多換幾檔。
 library;
-
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/bluechip.dart';
 import '../../core/factors.dart';
 import '../../core/lt_analysis.dart';
 import '../../core/portfolio.dart';
@@ -18,11 +17,9 @@ import '../../data/holdings_store.dart';
 import '../../data/longterm_store.dart';
 import '../home.dart';
 import '../layout.dart';
-import '../theme.dart';
 import '../widgets/common.dart';
 import '../widgets/lt_widgets.dart';
 import '../widgets/score_widgets.dart';
-import '../widgets/scorecard_card.dart';
 import 'stock_report_screen.dart';
 
 class PortfolioScreen extends StatefulWidget {
@@ -44,37 +41,34 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
         PageHeader(
           icon: Icons.pie_chart_outline,
           title: '組合',
-          subtitle: '長期投資：大盤核心＋選股名單，每月檢視一次、汰弱留強，不追高、不殺低',
+          subtitle: '長期投資：持有台股最大的公司、避開地雷，每月檢視一次',
           trailing: lt.result == null
               ? null
               : Text('資料到 ${lt.result!.date}', style: Theme.of(context).textTheme.bodySmall),
         ),
         PackGate(
-          builder: (context, r) => Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              ExposureCard(
-                r.exposure,
-                mode: lt.cfg.exposure,
-                compact: true,
-                onTap: () => HomeShell.goTo(context, HomeShell.market),
-              ),
-              const SizedBox(height: 4),
-              Center(
-                child: SegmentedButton<int>(
-                  segments: const [
-                    ButtonSegment(value: 0, icon: Icon(Icons.auto_awesome_outlined), label: Text('核心＋選股')),
-                    ButtonSegment(value: 1, icon: Icon(Icons.swap_horiz), label: Text('依我的持股汰弱留強')),
-                  ],
-                  selected: {_mode},
-                  onSelectionChanged: (s) => setState(() => _mode = s.first),
+          builder: (context, r) {
+            final bc = r.bluechip;
+            if (bc == null || bc.current == null) return const _NeedShares();
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Center(
+                  child: SegmentedButton<int>(
+                    segments: const [
+                      ButtonSegment(value: 0, icon: Icon(Icons.verified_outlined), label: Text('大型股避雷組合')),
+                      ButtonSegment(value: 1, icon: Icon(Icons.swap_horiz), label: Text('依我的持股調整')),
+                    ],
+                    selected: {_mode},
+                    onSelectionChanged: (s) => setState(() => _mode = s.first),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 8),
-              if (_mode == 0) _IdealView(r: r) else _SwapView(r: r),
-              if (lt.analyzing) const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
-            ],
-          ),
+                const SizedBox(height: 8),
+                if (_mode == 0) _PickView(r: r, bc: bc) else _SwapView(r: r, pick: bc.current!),
+                if (lt.analyzing) const Padding(padding: EdgeInsets.only(top: 8), child: LinearProgressIndicator()),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 8),
         const DisclaimerCard(text: '依公開資料、固定規則算出來的參考，不是投資建議。過去的回測成績不代表未來，實際買賣前請自己判斷。'),
@@ -86,55 +80,55 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
 void _openStock(BuildContext context, String code) =>
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => StockReportScreen(code: code)));
 
-class _IdealView extends StatelessWidget {
-  final LtResult r;
-  const _IdealView({required this.r});
+/// 舊資料包沒有發行股數：請使用者更新。
+class _NeedShares extends StatelessWidget {
+  const _NeedShares();
 
   @override
   Widget build(BuildContext context) {
-    final sim = r.sim;
-    final s = sim.stats;
-    final hold = sim.holdings.entries.toList()..sort((a, b) => b.value.$1.compareTo(a.value.$1));
-    final d = sim.pending ?? r.preview;
-    final total = r.live.ranked.length;
-    final held = sim.holdings.keys.toSet();
-    final bench = r.data.hasTri ? '加權報酬指數（含息）' : '加權指數';
-    final core = sim.cfg.coreWeight;
-    final candidates = [
-      for (final x in r.live.ranked)
-        if (x.investable &&
-            !held.contains(x.si) &&
-            !x.broken &&
-            !x.flags.contains(LtFlag.loss) &&
-            (x.raw.val60.isNaN || x.raw.val60 >= sim.cfg.minValue))
-          x,
-    ].take(15).toList();
+    final lt = context.watch<LongTermStore>();
+    return SectionCard(
+      title: '需要更新資料包',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('新的組合要用每家公司的發行股數算市值，這份資料在新版資料包裡（約 0.1 MB）。'),
+          const SizedBox(height: 8),
+          FilledButton.tonal(onPressed: lt.analyzing ? null : lt.updatePack, child: const Text('更新資料包')),
+        ],
+      ),
+    );
+  }
+}
+
+class _PickView extends StatelessWidget {
+  final LtResult r;
+  final BcResult bc;
+  const _PickView({required this.r, required this.bc});
+
+  @override
+  Widget build(BuildContext context) {
+    final p = bc.current!;
+    final f = bc.full;
+    final small = Theme.of(context).textTheme.bodySmall;
+    final reviewDay = !r.data.samples.last.live;
     final left = <Widget>[
       SectionCard(
-        title: core > 0 ? '大盤核心 ${pc(core)}＋選股名單 ${hold.length} 檔' : '選股名單 ${hold.length} 檔',
-        trailing: Text(
-          '${core > 0 ? '大盤 ${pc(core)}・' : ''}選股 ${pc((1 - core) * (1 - math.max(0.0, sim.cashWeight)))}・現金 ${pc((1 - core) * math.max(0.0, sim.cashWeight))}',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+        title: '大型股避雷組合：${p.stocks.length} 檔＋0050',
+        trailing: Text(reviewDay ? '今天是檢視日' : '下次檢視 ${nextReviewText(r.date!)}', style: small),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              '照同一套規則從 ${s.from} 開始操作到今天：年化 ${sp(s.cagr)}（同期$bench ${sp(s.benchCagr)}），'
-              '最大跌幅 ${pc(s.mdd)}（大盤 ${pc(s.benchMdd)}）；'
-              '每筆持股平均抱 ${(s.avgHoldDays / 21).toStringAsFixed(1)} 個月，${pc(s.posWin)} 賣出時是賺錢的。',
-              style: const TextStyle(fontSize: 13, height: 1.4),
+            const Text(
+              '照市值持有台股最大的 30 家公司，把有地雷的拿掉；單一檔最多 40%（連 0050 裡的一起算），'
+              '不到 1.5% 的小部位改放 0050。不預測誰會漲最多。',
+              style: TextStyle(fontSize: 13, height: 1.45),
             ),
             const SizedBox(height: 4),
             Text(
-              '成績單：${scorecardSummary(r.scorecard)}'
-              '${core > 0 ? '選股名單只是衛星，大盤核心負責跟上大盤。' : '建議搭配大盤核心（回測頁可以設定）。'}',
-              style: const TextStyle(fontSize: 13, height: 1.4),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              '這份名單適用到下次檢視日（${nextReviewText(r.date!)}）；分數的效力大約 3～6 個月，要每月看一次，不要買了就放著不管。',
-              style: Theme.of(context).textTheme.bodySmall,
+              '回測 ${f.from.substring(0, 7)}～${f.to.substring(0, 7)}（扣成本）：年化 ${sp(f.cagr)}，'
+              '0050 ${sp(f.etfCagr)}、大盤含息 ${sp(f.benchCagr)}；最大跌幅 ${pc(f.mdd)}（0050 ${pc(f.etfMdd)}、大盤 ${pc(f.benchMdd)}）。',
+              style: const TextStyle(fontSize: 13, height: 1.45),
             ),
             Wrap(
               spacing: 8,
@@ -142,77 +136,58 @@ class _IdealView extends StatelessWidget {
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 const _CapitalField(),
-                TextButton(
-                  onPressed: () => HomeShell.goTo(context, HomeShell.backtest),
-                  child: const Text('看成績單和完整回測 →'),
-                ),
+                TextButton(onPressed: () => HomeShell.goTo(context, HomeShell.backtest), child: const Text('看完整回測 →')),
               ],
             ),
             const Divider(height: 8),
-            if (core > 0) _CoreRow(weight: core),
-            for (final e in hold)
-              _HoldRow(r: r, si: e.key, weight: e.value.$1 * (1 - core), since: e.value.$2, total: total),
-            if (sim.rebalances.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  '上次檢視 ${sim.rebalances.last.date}（${sim.rebalances.last.execDate} 收盤調整）；權重是目前市值的比例，漲跌後會自然偏離，不用天天調整。',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
+            for (final st in p.stocks) _StockRow(r: r, st: st),
+            _EtfRow(weight: p.etfWeight),
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text('比重是目標；漲跌後會自然偏離，跟目標差不到 1/4 就不用調，每月檢視日再看一次。', style: small),
+            ),
           ],
         ),
       ),
     ];
     final right = <Widget>[
+      _Changes(r: r, bc: bc, reviewDay: reviewDay),
       SectionCard(
-        title: sim.pending != null ? '本月調整（明天收盤執行）' : '如果今天檢視',
-        child: d == null || (d.sells.isEmpty && d.buys.isEmpty)
-            ? Text('目前不需要換股。下次檢視：${nextReviewText(r.date!)}。', style: const TextStyle(fontSize: 13))
+        title: '被排除的地雷',
+        trailing: Text('市值前 30 大裡', style: small),
+        child: p.landmines.isEmpty
+            ? const Text('目前市值前 30 大都沒有地雷。', style: TextStyle(fontSize: 13))
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  for (final e in d.sells.entries)
-                    _ChangeRow(
-                      code: r.data.stocks[e.key].code,
-                      name: r.data.stocks[e.key].name,
-                      sell: true,
-                      reason: e.value,
-                    ),
-                  for (final b in d.buys)
-                    _ChangeRow(
-                      code: r.data.stocks[b.$1].code,
-                      name: r.data.stocks[b.$1].name,
-                      sell: false,
-                      reason: b.$2,
-                      weight: d.target[b.$1],
-                    ),
-                  const SizedBox(height: 6),
+                  for (final m in p.landmines) _MineRow(r: r, m: m),
+                  const SizedBox(height: 4),
                   Text(
-                    sim.pending != null
-                        ? '今天是每月檢視日，規則在收盤後決定、隔天收盤成交。'
-                        : '今天不是檢視日，這只是「現在檢視會怎麼做」的參考；正式調整在 ${nextReviewText(r.date!)}。',
-                    style: Theme.of(context).textTheme.bodySmall,
+                    bc.mines.isEmpty
+                        ? '有地雷的大型股不買；手上有的話建議換掉。'
+                        : '過去 ${bc.mines.length} 個月的檢視：被排除的地雷之後 6 個月，有 ${pc(bc.mineLagRate)} 的時候比沒地雷的大型股差，'
+                              '平均少賺 ${pc(-bc.mineAvgGap, 1)}。',
+                    style: small,
                   ),
                 ],
               ),
       ),
       SectionCard(
-        title: '候補名單',
-        trailing: Text('總分前 15、還沒持有、成交量夠', style: Theme.of(context).textTheme.bodySmall),
-        child: Column(
-          children: [for (final x in candidates) _CandidateRow(r: r, s: x, total: total)],
+        title: '最簡單的做法',
+        child: Text(
+          '不想管個股：全部買 0050，長期抱著。回測年化 ${sp(f.etfCagr)}、最大跌幅 ${pc(f.etfMdd)}；'
+          '這個組合多做的是「去掉地雷、台積電不超過 40%」，每年多 ${sp(f.cagr - f.etfCagr)}，但要自己每月檢視。',
+          style: const TextStyle(fontSize: 13, height: 1.45),
         ),
       ),
       SectionCard(
         title: '規則',
         child: Bullets(const [
-          '每月 11 日以後第一個交易日檢視一次（月營收 10 日前公布完），隔天收盤調整。',
-          '新買：全市場總分前 10%、每天平均成交 2 億元以上、沒有過熱、沒有虧損；買到目標權重，不買零碎部位。',
-          '續抱：總分還在前 30% 就不動；至少抱 3 個月，除非長期理由破壞（年線下彎又營收衰退、虧損又轉弱、或掉到後 15%）或每天成交掉到 5,000 萬元以下。',
-          '每月最多換 5 檔，換上去的要明顯更強；單一檔最多 15%、單一產業最多 30%。',
-          '權重：分數越高、波動越低的配越多。',
-          '角色：大盤核心負責跟上大盤；選股名單是衛星，目標是少跌、避開地雷、多賺一點點，不保證每次贏大盤。',
+          '範圍：上市公司市值（發行股數 × 股價）前 30 大。大家熟悉、成交量大，買得到也賣得掉。',
+          '地雷：虧損、年線下彎又營收衰退、殖利率陷阱（配的比賺的多）、成交量太小、總分在全市場後 20%。有地雷就不買。',
+          '比重：照市值；單一檔最多 40%（連 0050 裡的一起算）；不到 1.5% 的改放 0050，不買零碎部位。',
+          '每月 11 日以後第一個交易日檢視；比重跟目標差不到 1/4 就不調，減少交易。',
+          '不預測誰會漲最多：真實資料檢驗過，全市場評分挑贏家，抱 3～6 個月贏大盤的次數只有一半。',
         ], BulletKind.info),
       ),
     ];
@@ -220,64 +195,50 @@ class _IdealView extends StatelessWidget {
   }
 }
 
-class _HoldRow extends StatelessWidget {
+class _StockRow extends StatelessWidget {
   final LtResult r;
-  final int si;
-  final double weight;
-  final String since;
-  final int total;
-  const _HoldRow({required this.r, required this.si, required this.weight, required this.since, required this.total});
+  final BcStock st;
+  const _StockRow({required this.r, required this.st});
 
   @override
   Widget build(BuildContext context) {
-    final st = r.data.stocks[si];
-    final s = r.live.of(si);
-    final timing = entryTiming(shortReportOf(context, st.code), s);
+    final s = r.data.stocks[st.si];
+    final x = r.live.of(st.si);
     return InkWell(
-      onTap: () => _openStock(context, st.code),
+      onTap: () => _openStock(context, s.code),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              width: 56,
-              child: Text(pc(weight, 1), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              width: 60,
+              child: Text(pc(st.weight, 1), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
             ),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('${st.code} ${st.name}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                  Text('${s.code} ${s.name}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                   Text(
                     [
-                      if (s != null) rankText(s, total),
-                      '買進 $since',
-                      if (s != null && !s.raw.val60.isNaN) '每天成交約 ${moneyText(s.raw.val60)}',
-                      if (s != null) ...ltHighlights(s),
+                      '市值第 ${st.capRank} 大',
+                      '沒有地雷',
+                      if (x != null && !x.raw.val60.isNaN) '每天成交約 ${moneyText(x.raw.val60)}',
+                      if (x != null) ...ltHighlights(x).take(2),
                     ].join('・'),
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  if (s != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: Text(
-                        s.pct >= 0.9 ? '為什麼在名單裡：總分在全市場前 10%，符合新買條件' : '為什麼在名單裡：已經持有，總分還在前 30% 所以續抱（不因為小幅轉弱就賣）',
-                        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.primary),
-                      ),
+                  if (x != null && x.flags.contains(LtFlag.overheat))
+                    const Padding(
+                      padding: EdgeInsets.only(top: 2),
+                      child: Text('短期漲多：照比重分批買就好，不用追', style: TextStyle(fontSize: 12, color: Color(0xFFE8743B))),
                     ),
-                  if (s != null && s.flags.isNotEmpty) ...[const SizedBox(height: 3), LtFlagTags(s.flags)],
-                  TrendSpark(r: r, si: si),
-                  if (timing != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 3),
-                      child: Text('進場時機：${timing.$1}', style: TextStyle(fontSize: 12, color: timing.$2)),
-                    ),
-                  _Amount(weight: weight, price: s?.raw.close),
+                  TrendSpark(r: r, si: st.si),
+                  _Amount(weight: st.weight, price: x?.raw.close),
                 ],
               ),
             ),
-            if (s != null) ScoreBadge(score: s.composite, size: 40),
           ],
         ),
       ),
@@ -285,15 +246,161 @@ class _HoldRow extends StatelessWidget {
   }
 }
 
-class _ChangeRow extends StatelessWidget {
-  final String code, name, reason;
-  final bool sell;
-  final double? weight;
-  const _ChangeRow({required this.code, required this.name, required this.sell, required this.reason, this.weight});
+/// 0050 那一列。
+class _EtfRow extends StatelessWidget {
+  final double weight;
+  const _EtfRow({required this.weight});
 
   @override
   Widget build(BuildContext context) {
-    final c = sell ? const Color(0xFF5B8DB8) : const Color(0xFFCF3528);
+    final bars = context.read<HistoryStore>().rawSeriesOf('0050');
+    return InkWell(
+      onTap: () => _openStock(context, '0050'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 60,
+              child: Text(pc(weight, 1), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('0050 元大台灣50', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+                  Text(
+                    '市值前 30 大裡比重不到 1.5% 的那些公司，用 0050 一次買齊（006208 也可以）',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  _Amount(weight: weight, price: bars.isEmpty ? null : bars.last.close),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MineRow extends StatelessWidget {
+  final LtResult r;
+  final BcLandmine m;
+  const _MineRow({required this.r, required this.m});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = r.data.stocks[m.si];
+    return InkWell(
+      onTap: () => _openStock(context, s.code),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Tag('地雷', Color(0xFFB71C1C), filled: true),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('${s.code} ${s.name}（市值第 ${m.capRank} 大）', style: const TextStyle(fontWeight: FontWeight.w700)),
+                  Text(m.reasons.join('、'), style: Theme.of(context).textTheme.bodySmall),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 跟上次檢視比：新買、賣出、比重大幅改變的。
+class _Changes extends StatelessWidget {
+  final LtResult r;
+  final BcResult bc;
+  final bool reviewDay;
+  const _Changes({required this.r, required this.bc, required this.reviewDay});
+
+  @override
+  Widget build(BuildContext context) {
+    final cur = bc.current!, prev = bc.previous;
+    final small = Theme.of(context).textTheme.bodySmall;
+    final rows = <Widget>[];
+    String name(int si) => '${r.data.stocks[si].code} ${r.data.stocks[si].name}';
+    if (prev != null) {
+      final prevMines = {for (final m in prev.landmines) m.si};
+      final curMines = {for (final m in cur.landmines) m.si: m};
+      for (final st in cur.stocks) {
+        final old = prev.of(st.si);
+        if (old == null) {
+          rows.add(
+            _ChangeRow(
+              code: r.data.stocks[st.si].code,
+              label: name(st.si),
+              kind: '買進',
+              reason: prevMines.contains(st.si) ? '地雷解除' : '進入市值前 30 大，或比重超過 1.5%',
+              weight: st.weight,
+            ),
+          );
+        } else if ((st.weight - old.weight).abs() > bc.cfg.band * old.weight) {
+          rows.add(
+            _ChangeRow(
+              code: r.data.stocks[st.si].code,
+              label: name(st.si),
+              kind: st.weight > old.weight ? '加碼' : '減碼',
+              reason: '目標比重 ${pc(old.weight, 1)} → ${pc(st.weight, 1)}',
+              weight: st.weight,
+            ),
+          );
+        }
+      }
+      for (final st in prev.stocks) {
+        if (cur.of(st.si) != null) continue;
+        final m = curMines[st.si];
+        rows.add(
+          _ChangeRow(
+            code: r.data.stocks[st.si].code,
+            label: name(st.si),
+            kind: '賣出',
+            reason: m != null ? '有地雷：${m.reasons.join('、')}' : '掉出市值前 30 大或比重不到 1.5%，改由 0050 持有',
+          ),
+        );
+      }
+    }
+    return SectionCard(
+      title: reviewDay ? '本月調整（明天收盤執行）' : '如果今天檢視',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (rows.isEmpty) const Text('跟上次檢視比，不用調整。', style: TextStyle(fontSize: 13)) else ...rows,
+          const SizedBox(height: 6),
+          Text(
+            reviewDay
+                ? '今天是每月檢視日，跟上次（${prev?.date ?? '—'}）比較。'
+                : '今天不是檢視日，這是跟上次檢視（${prev?.date ?? '—'}）比「現在檢視會怎麼調」的參考；正式調整在 ${nextReviewText(r.date!)}。',
+            style: small,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChangeRow extends StatelessWidget {
+  final String code, label, kind, reason;
+  final double? weight;
+  const _ChangeRow({required this.code, required this.label, required this.kind, required this.reason, this.weight});
+
+  @override
+  Widget build(BuildContext context) {
+    final c = switch (kind) {
+      '賣出' || '減碼' => const Color(0xFF5B8DB8),
+      _ => const Color(0xFFCF3528),
+    };
     return InkWell(
       onTap: () => _openStock(context, code),
       child: Padding(
@@ -301,14 +408,14 @@ class _ChangeRow extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Tag(sell ? '賣出' : '買進', c, filled: true),
+            Tag(kind, c, filled: true),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '$code $name${weight == null ? '' : '（約 ${pc(weight!, 0)}）'}',
+                    '$label${weight == null ? '' : '（約 ${pc(weight!, 1)}）'}',
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                   Text(reason, style: Theme.of(context).textTheme.bodySmall),
@@ -322,53 +429,10 @@ class _ChangeRow extends StatelessWidget {
   }
 }
 
-class _CandidateRow extends StatelessWidget {
-  final LtResult r;
-  final LtScore s;
-  final int total;
-  const _CandidateRow({required this.r, required this.s, required this.total});
-
-  @override
-  Widget build(BuildContext context) {
-    final st = r.data.stocks[s.si];
-    final timing = entryTiming(shortReportOf(context, st.code), s);
-    return InkWell(
-      onTap: () => _openStock(context, st.code),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            RankBadge(rank: s.rank),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${st.code} ${st.name}', style: const TextStyle(fontWeight: FontWeight.w700)),
-                  Text(
-                    [
-                      if (!s.raw.val60.isNaN) '每天成交約 ${moneyText(s.raw.val60)}',
-                      ...ltHighlights(s),
-                      if (timing != null) timing.$1,
-                    ].join('・'),
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  if (s.flags.isNotEmpty) ...[const SizedBox(height: 2), LtFlagTags(s.flags)],
-                  TrendSpark(r: r, si: s.si, width: 200, height: 36),
-                ],
-              ),
-            ),
-            ScoreBadge(score: s.composite, size: 36),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _SwapView extends StatelessWidget {
   final LtResult r;
-  const _SwapView({required this.r});
+  final BcPick pick;
+  const _SwapView({required this.r, required this.pick});
 
   /// 手上持股（兩組合併、同一檔加總），市值用最新收盤。
   List<HoldingInput> _inputs(BuildContext context) {
@@ -401,15 +465,14 @@ class _SwapView extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('「持股」頁還沒有持股。輸入（或從 stock_acc 同步）你手上的股票之後，這裡會逐檔檢查：哪些續抱、哪些觀察、哪些建議換掉、換成什麼。'),
+            const Text('「持股」頁還沒有持股。輸入（或從 stock_acc 同步）你手上的股票之後，這裡會逐檔檢查：在不在組合裡、有沒有地雷、建議換成什麼。'),
             const SizedBox(height: 8),
             FilledButton.tonal(onPressed: () => HomeShell.goTo(context, HomeShell.holdings), child: const Text('到持股頁')),
           ],
         ),
       );
     }
-    final adv = swapAdvice(inputs, r.live, r.data, maxSwaps: lt.maxSwaps, cfg: lt.cfg);
-    final total = r.live.ranked.length;
+    final adv = bcSwapAdvice(inputs, pick, r.data, r.live, maxSwaps: lt.maxSwaps);
     final groups = <SwapAction, List<SwapRow>>{};
     for (final row in adv.rows) {
       (groups[row.action] ??= []).add(row);
@@ -419,7 +482,7 @@ class _SwapView extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SectionCard(
-          title: '汰弱留強：${adv.replaceCount == 0 ? '這個月不用換' : '建議換 ${adv.replaceCount} 檔'}',
+          title: adv.replaceCount == 0 ? '這個月不用換' : '建議換 ${adv.replaceCount} 檔',
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -442,10 +505,10 @@ class _SwapView extends StatelessWidget {
                 ],
               ),
               Text(
-                '手上 ${inputs.length} 檔：續抱 $keep、觀察 $watch、建議汰換 ${adv.replaceCount}'
-                '${groups[SwapAction.core] == null ? '' : '、大盤核心 ${groups[SwapAction.core]!.length}'}'
-                '${groups[SwapAction.notRated] == null ? '' : '、不在評分範圍 ${groups[SwapAction.notRated]!.length}'}。'
-                '不全面換股：只換長期理由已經破壞、或排名落到後段又抱超過 3 個月的，而且換上去的要明顯更強。',
+                '手上 ${inputs.length} 檔：在組合裡 $keep、不在組合但沒地雷 $watch、有地雷建議換 ${adv.replaceCount}'
+                '${groups[SwapAction.core] == null ? '' : '、0050 類 ${groups[SwapAction.core]!.length}'}'
+                '${groups[SwapAction.notRated] == null ? '' : '、不在判斷範圍 ${groups[SwapAction.notRated]!.length}'}。'
+                '不全面換股：只換有地雷的，換成組合裡還沒持有、比重大的公司。',
                 style: const TextStyle(fontSize: 13, height: 1.4),
               ),
               if (adv.notes.isNotEmpty) ...[const SizedBox(height: 6), Bullets(adv.notes, BulletKind.warn)],
@@ -460,14 +523,14 @@ class _SwapView extends StatelessWidget {
           SwapAction.notRated,
         ])
           if (groups[a] != null) ...[
-            SectionHeader(left: '${a.label}（${groups[a]!.length}）'),
+            SectionHeader(left: '${_label(a)}（${groups[a]!.length}）'),
             Card(
               clipBehavior: Clip.antiAlias,
               child: Column(
                 children: [
                   for (var i = 0; i < groups[a]!.length; i++) ...[
                     if (i > 0) const Divider(height: 1),
-                    _SwapRowTile(row: groups[a]![i], total: total),
+                    _SwapRowTile(r: r, row: groups[a]![i]),
                   ],
                 ],
               ),
@@ -478,6 +541,14 @@ class _SwapView extends StatelessWidget {
   }
 }
 
+String _label(SwapAction a) => switch (a) {
+  SwapAction.keep => '在組合裡：續抱',
+  SwapAction.watch => '不在組合裡、沒有地雷',
+  SwapAction.replace => '有地雷：建議換掉',
+  SwapAction.core => '0050 類',
+  SwapAction.notRated => '不在判斷範圍',
+};
+
 Color swapColor(SwapAction a) => switch (a) {
   SwapAction.replace => const Color(0xFFD32F2F),
   SwapAction.watch => const Color(0xFFC98A00),
@@ -487,13 +558,12 @@ Color swapColor(SwapAction a) => switch (a) {
 };
 
 class _SwapRowTile extends StatelessWidget {
+  final LtResult r;
   final SwapRow row;
-  final int total;
-  const _SwapRowTile({required this.row, required this.total});
+  const _SwapRowTile({required this.r, required this.row});
 
   @override
   Widget build(BuildContext context) {
-    final s = row.score;
     final h = row.holding;
     return InkWell(
       onTap: () => _openStock(context, h.code),
@@ -510,16 +580,13 @@ class _SwapRowTile extends StatelessWidget {
                   child: Text('${h.code} ${h.name}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
                 ),
                 Text('佔 ${pc(row.weight, 0)}', style: Theme.of(context).textTheme.bodySmall),
-                if (s != null) ...[const SizedBox(width: 8), ScoreBadge(score: s.composite, size: 36)],
               ],
             ),
             const SizedBox(height: 4),
-            if (s != null) Text(rankText(s, total), style: Theme.of(context).textTheme.bodySmall),
             Bullets(row.reasons, row.action == SwapAction.keep ? BulletKind.good : BulletKind.info),
-            if (s != null && s.flags.isNotEmpty) LtFlagTags(s.flags),
             if (row.candidates.isNotEmpty) ...[
               const SizedBox(height: 6),
-              Text('可以換成：', style: Theme.of(context).textTheme.bodySmall),
+              Text('可以換成（組合裡還沒持有的）：', style: Theme.of(context).textTheme.bodySmall),
               const SizedBox(height: 4),
               Wrap(
                 spacing: 6,
@@ -527,21 +594,14 @@ class _SwapRowTile extends StatelessWidget {
                 children: [
                   for (final c in row.candidates)
                     ActionChip(
-                      avatar: CircleAvatar(
-                        backgroundColor: scoreColor(context, c.composite),
-                        child: Text(
-                          c.composite.toStringAsFixed(0),
-                          style: const TextStyle(fontSize: 10, color: Colors.white),
-                        ),
-                      ),
-                      label: Text('${c.code}（第 ${c.rank} 名）'),
+                      label: Text('${c.code} ${r.data.stock(c.code)?.name ?? ''}'),
                       onPressed: () => _openStock(context, c.code),
                     ),
                 ],
               ),
             ] else if (row.action == SwapAction.replace) ...[
               const SizedBox(height: 4),
-              Text('目前找不到明顯更強、又不會讓產業太集中的替代股，可以先減碼、保留現金。', style: Theme.of(context).textTheme.bodySmall),
+              Text('組合裡的股票都已經有了：賣掉的錢可以放 0050。', style: Theme.of(context).textTheme.bodySmall),
             ],
           ],
         ),
@@ -615,42 +675,6 @@ class _Amount extends StatelessWidget {
         '約 ${(money / 10000).toStringAsFixed(1)} 萬'
         '${shares == null ? '' : '・約 ${lots! >= 1 ? '$lots 張${shares % 1000 >= 100 ? '又 ${shares % 1000} 股' : ''}' : '$shares 股（零股）'}'}',
         style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-      ),
-    );
-  }
-}
-
-/// 大盤核心那一列：市值型 ETF。
-class _CoreRow extends StatelessWidget {
-  final double weight;
-  const _CoreRow({required this.weight});
-
-  @override
-  Widget build(BuildContext context) {
-    final bars = context.read<HistoryStore>().rawSeriesOf('0050');
-    return InkWell(
-      onTap: () => _openStock(context, '0050'),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 56,
-              child: Text(pc(weight, 1), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('0050 元大台灣50（大盤核心）', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
-                  Text('市值型 ETF，跟著大盤（含台積電等大型股）走；長期抱著，每月檢視時調回這個比例，不用選股', style: Theme.of(context).textTheme.bodySmall),
-                  _Amount(weight: weight, price: bars.isEmpty ? null : bars.last.close),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

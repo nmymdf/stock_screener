@@ -11,6 +11,7 @@ import 'pack.dart';
 import 'portfolio.dart';
 import 'research.dart';
 import 'scorecard.dart';
+import 'bluechip.dart';
 
 /// 從資料夾讀資料包：lt-YYYY（各年）、recent（最近 30 天）、營收、除權息、國際指標。
 /// [extraDays] 是資料包之後的日子（例如 App 今天直接抓到的收盤），依日期接在最後面。
@@ -34,6 +35,7 @@ LtData loadPackDir(String dir, {List<PackDay> extraDays = const []}) {
   if (rj != null) rev = RevenueData.fromJson(rj);
   final ij = readGz('intl.json.gz');
   if (ij != null) intl = IntlData.fromJson(ij);
+  final sj = readGz('shares.json.gz');
   final b = LtDataBuilder(dividends: div);
   final re = RegExp(r'lt-(\d{4})\.json\.gz$');
   final years = <int>[];
@@ -60,7 +62,7 @@ LtData loadPackDir(String dir, {List<PackDay> extraDays = const []}) {
   for (final day in extraDays) {
     b.addDay(day, knownOnly: true);
   }
-  return b.build(revenue: rev, dividends: div, intl: intl);
+  return b.build(revenue: rev, dividends: div, intl: intl, shares: sj == null ? null : SharesData.fromJson(sj));
 }
 
 class LtVariant {
@@ -86,8 +88,11 @@ class LtResult {
   /// 現在如果檢視一次會怎麼調整（今天不是檢視日時，給參考）。
   final LtDecision? preview;
 
-  /// 選股名單成績單：過去每個月的名單抱 3、6 個月有沒有贏大盤。
+  /// 選股名單成績單：過去每個月的名單抱 3、6 個月有沒有贏大盤（舊方法，回測頁對照用）。
   final Scorecard scorecard;
+
+  /// 大型股避雷組合（主要方法）；舊資料包沒有發行股數時是 null。
+  final BcResult? bluechip;
   final Duration elapsed;
 
   const LtResult({
@@ -100,6 +105,7 @@ class LtResult {
     required this.research,
     required this.preview,
     required this.scorecard,
+    this.bluechip,
     required this.elapsed,
   });
 
@@ -178,6 +184,7 @@ LtResult runLtAnalysis(LtData data, {LtConfig cfg = const LtConfig(), bool varia
     research: research,
     preview: preview,
     scorecard: buildScorecard(data, book, sim),
+    bluechip: runBlueChip(data, book),
     elapsed: sw.elapsed,
   );
 }

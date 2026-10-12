@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "daily＝每日更新、backfill＝回補歷年、publish＝用之前回補的結果發布、probe＝試抓、research＝跑長期回測、shares＝抓每月發行股數（研究用）"
+        description: "daily＝每日更新、backfill＝回補歷年、publish＝用之前回補的結果發布、probe＝試抓、research＝跑長期回測、shares＝補抓每月發行股數"
         type: choice
         options: [daily, backfill, publish, probe, research, shares]
         default: daily
@@ -227,7 +227,7 @@ jobs:
       - run: dart run tool/datapack.dart research --dir pack
         working-directory: app
 
-  # 研究用：每月一天的發行股數（算市值權重）。不放進 manifest，App 不會下載。
+  # 手動補齊每月檢視日的發行股數（算市值權重）；平常由 daily 順便更新。
   shares:
     if: inputs.mode == 'shares'
     runs-on: ubuntu-latest

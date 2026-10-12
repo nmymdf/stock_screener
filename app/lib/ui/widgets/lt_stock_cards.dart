@@ -6,6 +6,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/bluechip.dart';
 import '../../core/factors.dart';
 import '../../core/lt_analysis.dart';
 import '../../core/pack.dart';
@@ -72,7 +73,10 @@ class _LtHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final total = r.live.ranked.length;
-    final held = r.sim.holdings.containsKey(s.si);
+    final pick = r.bluechip?.current;
+    final held = pick?.of(s.si);
+    final mine = pick?.landmines.where((m) => m.si == s.si).firstOrNull;
+    final reasons = landmineReasonsOf(s);
     final ind = industryOf(s.code);
     final timing = entryTiming(shortReportOf(context, s.code), s);
     final hl = ltHighlights(s);
@@ -93,7 +97,12 @@ class _LtHeader extends StatelessWidget {
                       Text(rankText(s, total), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
                       const SizedBox(height: 2),
                       Text(
-                        [?ind, if (held) '在選股名單裡', if (s.pct >= 0.9 && !held) '前 10%：可以列入候選'].join('・'),
+                        [
+                          ?ind,
+                          if (held != null) '在大型股避雷組合裡（市值第 ${held.capRank} 大，比重 ${pc(held.weight, 1)}）',
+                          if (mine != null) '市值第 ${mine.capRank} 大，但有地雷',
+                          if (held == null && mine == null && reasons.isNotEmpty) '地雷：${reasons.join('、')}',
+                        ].join('・'),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                       if (s.flags.isNotEmpty) ...[const SizedBox(height: 4), LtFlagTags(s.flags, showIlliquid: true)],

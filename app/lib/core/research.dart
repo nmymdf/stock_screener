@@ -268,6 +268,25 @@ String runPackResearch(String dir) {
       );
     }
   }
+  final bc = r.bluechip;
+  if (bc != null) {
+    sb.writeln('\n── 大型股避雷組合（市值前 30 大去掉地雷、單一檔 ≤40%、小部位放 0050，扣成本）──');
+    for (final p in bc.periods) {
+      sb.writeln(
+        '${p.label}：組合 ${_p(p.cagr)}／跌幅 ${_p(-p.mdd)}　0050 ${_p(p.etfCagr)}／${_p(-p.etfMdd)}　大盤 ${_p(p.benchCagr)}／${_p(-p.benchMdd)}',
+      );
+    }
+    sb.writeln(
+      '年週轉 ${(bc.turnover * 100).round()}%；地雷 ${bc.mines.length} 次，之後 6 個月落後的比例 ${(bc.mineLagRate * 100).round()}%、平均差 ${_p(bc.mineAvgGap)}',
+    );
+    final c = bc.current;
+    if (c != null) {
+      sb.writeln(
+        '最新（${c.date}）：${c.stocks.map((x) => '${data.stocks[x.si].code}${data.stocks[x.si].name} ${(x.weight * 100).toStringAsFixed(1)}%').join('、')}；0050 ${(c.etfWeight * 100).toStringAsFixed(1)}%',
+      );
+      sb.writeln('地雷：${c.landmines.map((m) => '${data.stocks[m.si].name}（${m.reasons.join('、')}）').join('、')}');
+    }
+  }
   final card = r.scorecard;
   sb.writeln('\n── 選股名單成績單（每次 ${card.size} 檔，只看選股部分，不扣成本）──');
   for (final h in card.horizons) {

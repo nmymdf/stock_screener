@@ -454,6 +454,31 @@ class DividendData {
   );
 }
 
+/// 每月檢視日的發行股數（證交所 MI_QFIIS），算市值用：'YYYY-MM' → (那天, 代號 → 股數)。
+class SharesData {
+  final Map<String, (String, Map<String, int>)> months;
+  const SharesData(this.months);
+
+  bool get isEmpty => months.isEmpty;
+
+  static SharesData fromJson(Map<String, dynamic> j) => SharesData({
+    for (final e in ((j['m'] as Map?) ?? const {}).entries)
+      e.key as String: (
+        (e.value as Map)['d'] as String,
+        {for (final x in ((e.value as Map)['s'] as Map).entries) x.key as String: (x.value as num).toInt()},
+      ),
+  });
+
+  /// [date] 那天已經知道的最新一份股數（當月的取樣日還沒到就用上個月的）。
+  Map<String, int>? at(String date) {
+    String? best;
+    for (final e in months.entries) {
+      if (e.value.$1.compareTo(date) <= 0 && (best == null || e.key.compareTo(best) > 0)) best = e.key;
+    }
+    return best == null ? null : months[best]!.$2;
+  }
+}
+
 class IntlData {
   final Map<String, IntlSeries> series;
   const IntlData(this.series);

@@ -121,6 +121,16 @@ class LtConfig {
   int get maxPerIndustry => math.max(1, (maxIndustry * size + 1e-9).floor());
 }
 
+/// 回測的大跌期間（壓力測試）。
+const ltStressPeriods = [
+  ('2015 中國股災', '2015-04-27', '2015-08-24'),
+  ('2018 貿易戰', '2018-09-28', '2018-10-26'),
+  ('2020 新冠疫情', '2020-01-20', '2020-03-19'),
+  ('2022 升息空頭', '2022-01-05', '2022-10-25'),
+  ('2024 日圓套利平倉', '2024-07-11', '2024-08-05'),
+  ('2025 關稅衝擊', '2025-03-26', '2025-04-09'),
+];
+
 /// 產業（沒有分類的已下市股票各自算一類，不會被誤擋）。
 String industryKey(String code) => industryOf(code) ?? '其他:$code';
 
@@ -748,15 +758,6 @@ class PortfolioSim {
     );
   }
 
-  static const _stressPeriods = [
-    ('2015 中國股災', '2015-04-27', '2015-08-24'),
-    ('2018 貿易戰', '2018-09-28', '2018-10-26'),
-    ('2020 新冠疫情', '2020-01-20', '2020-03-19'),
-    ('2022 升息空頭', '2022-01-05', '2022-10-25'),
-    ('2024 日圓套利平倉', '2024-07-11', '2024-08-05'),
-    ('2025 關稅衝擊', '2025-03-26', '2025-04-09'),
-  ];
-
   PerfStats _stats(int startT, int endT, Float64List nav, Float64List bench, Float64List eqw) {
     final n = nav.length;
     final years = math.max(1 / 250, (n - 1) / 250.0);
@@ -823,7 +824,7 @@ class PortfolioSim {
     }
 
     final stress = <StressRow>[];
-    for (final (label, from, to) in _stressPeriods) {
+    for (final (label, from, to) in ltStressPeriods) {
       final a = data.dateIndex(from) - startT, b = data.dateIndex(to) - startT;
       if (a < 0 || b <= a || b >= n) continue;
       stress.add(StressRow(label, from, to, nav[b] / nav[a] - 1, bench[b] / bench[a] - 1));
@@ -877,7 +878,7 @@ extension SwapActionInfo on SwapAction {
     SwapAction.keep => '續抱',
     SwapAction.watch => '觀察',
     SwapAction.replace => '建議汰換',
-    SwapAction.core => '大盤核心',
+    SwapAction.core => '0050 部分',
     SwapAction.notRated => '不在評分範圍',
   };
 }

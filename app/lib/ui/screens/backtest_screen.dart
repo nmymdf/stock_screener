@@ -1,8 +1,8 @@
-/// 「回測」：把長期組合的規則套到 2014 年以來的每一個月，看照做的話會怎樣；
-/// 再看每一類因子過去是不是真的有用（因子研究）。
+/// 「回測」：大型股避雷組合套到 2014 年以來每一個月，跟 0050、大盤（含息）比；
+/// 另外列出舊方法（全市場評分挑股）的成績，和各類分數的因子研究。
 ///
-/// 每個月只用「當時看得到」的資料決定（營收保守假設 11 日以後才知道），隔天收盤成交，
-/// 扣手續費、證交稅、滑價；股票名單包含之後下市的，沒有存活者偏差。
+/// 每個月只用「當時看得到」的資料決定（發行股數、股價、評分），隔天收盤成交，扣手續費、證交稅、滑價；
+/// 股票名單包含之後下市的，沒有存活者偏差；減資、變更面額照證交所參考價接起來。
 library;
 
 import 'dart:math' as math;
@@ -10,9 +10,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../../core/exposure.dart';
+import '../../core/bluechip.dart';
 import '../../core/lt_analysis.dart';
-import '../../core/portfolio.dart';
 import '../../core/research.dart';
 import '../../data/longterm_store.dart';
 import '../layout.dart';
@@ -20,9 +19,7 @@ import '../theme.dart';
 import '../widgets/charts.dart';
 import '../widgets/common.dart';
 import '../widgets/lt_widgets.dart';
-import '../widgets/scorecard_card.dart';
 import '../widgets/score_widgets.dart';
-import 'stock_report_screen.dart';
 
 class BacktestScreen extends StatelessWidget {
   const BacktestScreen({super.key});
@@ -33,35 +30,38 @@ class BacktestScreen extends StatelessWidget {
     return ListView(
       padding: pagePadding(context),
       children: [
-        const PageHeader(icon: Icons.science, title: '回測', subtitle: '長期組合的規則套到過去十幾年，每個月只用當時看得到的資料'),
+        const PageHeader(icon: Icons.science, title: '回測', subtitle: '大型股避雷組合套到過去十幾年，每個月只用當時看得到的資料'),
         const _HowItWorks(),
         PackGate(
-          builder: (context, r) => Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _Settings(lt: lt),
-              if (lt.analyzing) const LinearProgressIndicator(),
-              _Verdict(r: r),
-              ScorecardCard(sc: r.scorecard),
-              SplitView(
-                left: [
-                  _NavChart(r: r),
-                  _Years(s: r.sim.stats),
-                  _Stress(s: r.sim.stats),
+          builder: (context, r) {
+            final bc = r.bluechip;
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (lt.analyzing) const LinearProgressIndicator(),
+                if (bc == null)
+                  const SectionCard(title: '需要更新資料包', child: Text('新版資料包加入了每家公司的發行股數（算市值用），請到「組合」頁更新。'))
+                else ...[
+                  _Verdict(bc: bc),
+                  SplitView(
+                    left: [
+                      _NavChart(r: r, bc: bc),
+                      _Years(bc: bc),
+                    ],
+                    right: [
+                      _Stress(bc: bc),
+                      _Mines(bc: bc),
+                      _OldMethod(r: r, bc: bc),
+                    ],
+                  ),
                 ],
-                right: [
-                  _Kpis(r: r),
-                  _Variants(r: r),
-                  _Positions(r: r),
-                ],
-              ),
-              _Research(fr: r.research),
-              _Rebalances(r: r),
-            ],
-          ),
+                _Research(fr: r.research),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 8),
-        const DisclaimerCard(text: '回測是用過去的資料模擬，不保證未來。規則是事先決定、沒有拿回測結果去調整，但市場會變，請把結果當作「這套方法大概的個性」，不是報酬保證。'),
+        const DisclaimerCard(text: '回測是用過去的資料模擬，不保證未來。規則事先決定、用沒看過的期間檢驗過，但市場會變，請把結果當作「這套方法大概的個性」，不是報酬保證。'),
       ],
     );
   }
@@ -71,22 +71,19 @@ class _HowItWorks extends StatelessWidget {
   const _HowItWorks();
 
   static const _steps = [
-    (Icons.event, '每月檢視一次', '每月 11 日以後的第一個交易日收盤後（上市公司月營收 10 日前公布完），隔天收盤買賣。'),
-    (Icons.leaderboard, '六大類分數', '動能趨勢、營收成長、獲利品質、價值股利各 20%，法人籌碼、穩定度各 10%，換成全市場百分位再加權。權重事先決定，不拿回測結果去調。'),
-    (Icons.swap_horiz, '汰弱留強', '新買前 10%、還在前 30% 就續抱、至少抱 3 個月（理由破壞除外）、每月最多換 5 檔，單一檔 15%、單一產業 30%。'),
-    (Icons.receipt_long, '扣掉成本', '買進：手續費 0.1425% ＋ 滑價 0.1%；賣出：再加證交稅 0.3%。配息照實際除息再投入（總報酬）。'),
-    (Icons.visibility_off, '不偷看未來', '本益比、殖利率用當天公布的；營收假設 11 日以後才知道；股價只用當天以前的；名單包含之後下市的股票。'),
-    (Icons.balance, '跟誰比', '加權股價報酬指數（含現金股利再投入，最公平的比較基準），以及「全部可投資股票平均分配」。'),
+    (Icons.event, '每月檢視一次', '每月 11 日以後的第一個交易日收盤後，隔天收盤買賣。股數用當天公布的發行股數，股價用當天收盤。'),
+    (Icons.apartment, '市值前 30 大', '市值 = 發行股數 × 股價。只看最大的 30 家：大家熟悉、成交量大，買得到也賣得掉。'),
+    (Icons.report_problem_outlined, '去掉地雷', '虧損、年線下彎又營收衰退、殖利率陷阱、成交量太小、總分在全市場後 20%：有其中一項就不買。'),
+    (Icons.pie_chart_outline, '照市值配置', '單一檔最多 40%（連 0050 裡的一起算）；不到 1.5% 的改放 0050；跟目標差不到 1/4 就不調。'),
+    (Icons.receipt_long, '扣掉成本', '買進：手續費 0.1425% ＋ 滑價 0.1%；賣出：再加證交稅 0.3%。配息照實際除息再投入（總報酬），減資照證交所參考價。'),
+    (Icons.balance, '跟誰比', '0050（用市值前 50 大每月調整模擬）和加權股價報酬指數（含息）。'),
   ];
 
   static const _terms = [
     ('年化報酬', '平均每年的報酬率（複利）。'),
-    ('超額報酬', '比報酬指數每年多賺（或少賺）多少。'),
     ('最大跌幅', '帳面從最高點最多回落多少：決定你撐不撐得住。'),
-    ('每年贏指數', '每個日曆年組合報酬 > 報酬指數的比例。長期策略能 60～70% 已經很好。'),
-    ('每筆持股賺錢', '每一次買進到賣出（含配息、扣成本）是賺錢的比例。'),
-    ('週轉率', '一年換掉多少比例的持股。越低越省成本、越符合長期。'),
-    ('資訊係數 IC', '分數排名和之後報酬排名的相關係數；長期平均 0.03～0.05 以上、而且多數月份是正的，就代表有用。'),
+    ('2014–2019／2020 以後', '規則只看前一段（2014–2019）決定，後一段（2020 以後）是事先沒看過的檢驗。'),
+    ('地雷成績單', '每個月被排除的大型股，之後 6 個月跟沒地雷的大型股比，看「去掉地雷」是不是真的有用。'),
   ];
 
   @override
@@ -170,145 +167,62 @@ class _HowItWorks extends StatelessWidget {
   }
 }
 
-class _Settings extends StatelessWidget {
-  final LongTermStore lt;
-  const _Settings({required this.lt});
+class _Verdict extends StatelessWidget {
+  final BcResult bc;
+  const _Verdict({required this.bc});
 
   @override
   Widget build(BuildContext context) {
-    final busy = lt.analyzing;
-    Widget dd<T>(String label, T value, List<(T, String)> items, void Function(T) on) => Row(
-      mainAxisSize: MainAxisSize.min,
+    final f = bc.full;
+    final money = 100 * math.pow(1 + f.cagr, (bc.endT - bc.startT) / 250.0);
+    final etfMoney = 100 * math.pow(1 + f.etfCagr, (bc.endT - bc.startT) / 250.0);
+    final benchMoney = 100 * math.pow(1 + f.benchCagr, (bc.endT - bc.startT) / 250.0);
+    TableRow row(List<String> cells, {bool head = false}) => TableRow(
       children: [
-        Text(label, style: const TextStyle(fontSize: 13)),
-        const SizedBox(width: 6),
-        DropdownButton<T>(
-          value: value,
-          underline: const SizedBox.shrink(),
-          items: [for (final (v, t) in items) DropdownMenuItem(value: v, child: Text(t))],
-          onChanged: busy
-              ? null
-              : (v) {
-                  if (v != null) on(v);
-                },
-        ),
+        for (final c in cells)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
+            child: Text(c, style: TextStyle(fontSize: 13, fontWeight: head ? FontWeight.w800 : FontWeight.w500)),
+          ),
       ],
     );
     return SectionCard(
-      title: '組合設定',
-      trailing: Text('改了會重新回測，「組合」頁也一起用', style: Theme.of(context).textTheme.bodySmall),
-      child: Wrap(
-        spacing: 20,
-        runSpacing: 4,
+      title: '結論',
+      trailing: Text('${f.from} ～ ${f.to}', style: Theme.of(context).textTheme.bodySmall),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          dd('檔數', lt.cfg.size, [
-            for (final n in const [10, 12, 15]) (n, '$n 檔'),
-          ], (v) => lt.setConfig(size: v)),
-          dd('每月最多換', lt.cfg.maxChanges, [
-            for (final n in const [2, 3, 4, 5]) (n, '$n 檔'),
-          ], (v) => lt.setConfig(maxChanges: v)),
-          dd('股票比例', lt.cfg.exposure, [
-            for (final m in ExposureMode.values) (m, m.label),
-          ], (v) => lt.setConfig(exposure: v)),
-          dd('大盤核心 ETF', lt.cfg.coreWeight, [
-            for (final w in const [0.0, 0.3, 0.5, 0.7]) (w, w == 0 ? '不放' : '${(w * 100).round()}%'),
-          ], (v) => lt.setConfig(coreWeight: v)),
-        ],
-      ),
-    );
-  }
-}
-
-class _Verdict extends StatelessWidget {
-  final LtResult r;
-  const _Verdict({required this.r});
-
-  @override
-  Widget build(BuildContext context) {
-    final s = r.sim.stats;
-    final beatYears = s.yearRows.where((y) => y.beat).length;
-    // 三個目標：報酬接近大盤、跌得比大盤少、不買到地雷
-    final closed = r.sim.episodes.where((e) => !e.open).toList();
-    final bigLoss = closed.where((e) => e.ret < -0.3).length;
-    final goals = [
-      ('長期報酬接近大盤（年化差 3% 以內）', s.excessCagr >= -0.03, '年化 ${sp(s.excessCagr)}'),
-      ('最大跌幅明顯比大盤小', s.mdd <= s.benchMdd * 0.8, '${pc(s.mdd)} 對 ${pc(s.benchMdd)}'),
-      ('不買到地雷（賠超過 30% 的持股 5% 以內）', closed.isEmpty || bigLoss / closed.length <= 0.05, '${closed.length} 筆中 $bigLoss 筆'),
-    ];
-    final met = goals.where((g) => g.$2).length;
-    final (label, color, icon) = met == 3
-        ? ('三個目標都達成', AppColors.up, Icons.thumb_up_alt_outlined)
-        : met == 2
-        ? ('達成兩個目標', const Color(0xFFC98A00), Icons.trending_flat)
-        : ('達成 $met 個目標', const Color(0xFF5B8DB8), Icons.thumb_down_alt_outlined);
-    final bench = r.sim.benchIsTri ? '加權報酬指數（含息）' : '加權指數（不含息，基準被低估）';
-    final money = 1000000 * (1 + s.totalRet);
-    final benchMoney = 1000000 * (1 + s.benchTotal);
-    return Card(
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border(left: BorderSide(color: color, width: 5)),
-        ),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 10,
-              crossAxisAlignment: WrapCrossAlignment.center,
+          Text(
+            '${f.from.substring(0, 4)} 年投入 100 萬：大型股避雷組合約 ${money.toStringAsFixed(0)} 萬，'
+            '0050 約 ${etfMoney.toStringAsFixed(0)} 萬，大盤含息約 ${benchMoney.toStringAsFixed(0)} 萬（都已扣交易成本）。',
+            style: const TextStyle(fontSize: 14, height: 1.5),
+          ),
+          const SizedBox(height: 8),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Table(
+              defaultColumnWidth: const IntrinsicColumnWidth(),
               children: [
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(icon, color: color),
-                    const SizedBox(width: 8),
-                    Text(
-                      label,
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: color),
-                    ),
-                  ],
-                ),
-                Text('${s.from} ～ ${s.to}', style: Theme.of(context).textTheme.bodySmall),
+                row(['期間', '組合 年化／最大跌幅', '0050', '大盤（含息）'], head: true),
+                for (final p in bc.periods)
+                  row([
+                    p.label,
+                    '${sp(p.cagr)}／${pc(p.mdd)}',
+                    '${sp(p.etfCagr)}／${pc(p.etfMdd)}',
+                    '${sp(p.benchCagr)}／${pc(p.benchMdd)}',
+                  ]),
               ],
             ),
-            const SizedBox(height: 6),
-            for (final (text, ok, detail) in goals)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(ok ? Icons.check_circle : Icons.cancel, size: 18, color: ok ? AppColors.up : AppColors.down),
-                    const SizedBox(width: 6),
-                    Expanded(child: Text('$text：$detail', style: const TextStyle(fontSize: 13.5))),
-                  ],
-                ),
-              ),
-            const SizedBox(height: 8),
-            if (r.sim.cfg.coreWeight > 0)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Text(
-                  '（大盤核心 ${pc(r.sim.cfg.coreWeight)} 放 0050、其餘選股，每月調回比例）',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
-            Text(
-              '照這套規則，${s.from.substring(0, 4)} 年投入 100 萬，到現在約 ${(money / 10000).toStringAsFixed(0)} 萬'
-              '（年化 ${sp(s.cagr)}）；同期 $bench 約 ${(benchMoney / 10000).toStringAsFixed(0)} 萬（年化 ${sp(s.benchCagr)}）。\n'
-              '${s.yearRows.length} 個完整年度中有 $beatYears 年贏指數，每個月贏指數的比例 ${pc(s.monthlyWin)}；'
-              '最大跌幅 ${pc(s.mdd)}（指數 ${pc(s.benchMdd)}）；平均每筆抱 ${(s.avgHoldDays / 21).toStringAsFixed(1)} 個月，'
-              '${pc(s.posWin)} 的持股賣出時是賺錢的。',
-              style: const TextStyle(fontSize: 14, height: 1.55),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '前半段每年超額 ${sp(s.firstHalfExcess)}、後半段 ${sp(s.secondHalfExcess)}'
-              '${(s.firstHalfExcess > 0) == (s.secondHalfExcess > 0) ? '：前後一致，不是只靠某一段運氣' : '：前後不一致，要保守看待'}。',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(height: 8),
+          Bullets([
+            '兩段期間都比 0050 好一點（${sp(bc.periods[1].cagr - bc.periods[1].etfCagr)}、${sp(bc.periods[2].cagr - bc.periods[2].etfCagr)}／年），'
+                '差別主要來自「去掉地雷」和「台積電不超過 40%」。',
+            '跟 0050 一樣，比大盤（含息）好，因為大型公司這十幾年漲得比中小型公司多。',
+            '最大跌幅比大盤深（${pc(f.mdd)} 對 ${pc(f.benchMdd)}）：大型股、尤其台積電佔很重，大跌時一起跌。這是持有大型股的代價。',
+            '每年週轉約 ${(bc.turnover * 100).round()}%（0050 模擬約 ${(bc.etfTurnover * 100).round()}%），成本已經扣掉。',
+          ], BulletKind.info),
+        ],
       ),
     );
   }
@@ -323,76 +237,43 @@ List<double?> _thin(List<double> v, int n) {
 
 class _NavChart extends StatelessWidget {
   final LtResult r;
-  const _NavChart({required this.r});
+  final BcResult bc;
+  const _NavChart({required this.r, required this.bc});
 
   @override
-  Widget build(BuildContext context) {
-    final sim = r.sim;
-    return SectionCard(
-      title: '資產走勢（起點 = 1）',
-      child: SimpleChart(
-        height: 240,
-        series: [
-          ChartSeries('組合', _thin(sim.nav, 420), AppColors.up, width: 2),
-          ChartSeries(sim.benchIsTri ? '加權報酬指數' : '加權指數', _thin(sim.bench, 420), Colors.blueGrey),
-          ChartSeries('全部可投資股票平均', _thin(sim.eqw, 420), const Color(0xFFC9A000)),
-        ],
-        startLabel: r.data.dates[sim.startT],
-        endLabel: r.data.dates[sim.endT],
-        yFormat: (v) => v.toStringAsFixed(1),
-      ),
-    );
-  }
-}
-
-class _Kpis extends StatelessWidget {
-  final LtResult r;
-  const _Kpis({required this.r});
-
-  @override
-  Widget build(BuildContext context) {
-    final s = r.sim.stats;
-    final up = AppColors.up, down = AppColors.down;
-    return SectionCard(
-      title: '重點數字',
-      child: StatGrid(
-        bare: true,
-        stats: [
-          ('年化報酬', sp(s.cagr), s.cagr >= 0 ? up : down),
-          ('報酬指數年化', sp(s.benchCagr), null),
-          ('每年超額', sp(s.excessCagr), s.excessCagr >= 0 ? up : down),
-          ('最大跌幅', pc(s.mdd), null),
-          ('指數最大跌幅', pc(s.benchMdd), null),
-          ('每年贏指數', pc(s.yearlyWin), null),
-          ('每月贏指數', pc(s.monthlyWin), null),
-          ('夏普值', s.sharpe.toStringAsFixed(2), null),
-          ('年波動度', pc(s.vol), null),
-          ('年週轉率', pc(s.turnover), null),
-          ('平均股票部位', pc(s.avgExposure), null),
-          ('等權全市場年化', sp(s.eqwCagr), null),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => SectionCard(
+    title: '資產走勢（起點 = 1）',
+    child: SimpleChart(
+      height: 240,
+      series: [
+        ChartSeries('大型股避雷組合', _thin(bc.nav, 420), AppColors.up, width: 2),
+        ChartSeries('0050（模擬）', _thin(bc.etf, 420), const Color(0xFFC9A000)),
+        ChartSeries('加權報酬指數', _thin(bc.bench, 420), Colors.blueGrey),
+      ],
+      startLabel: r.data.dates[bc.startT],
+      endLabel: r.data.dates[bc.endT],
+      yFormat: (v) => v.toStringAsFixed(1),
+    ),
+  );
 }
 
 class _Years extends StatelessWidget {
-  final PerfStats s;
-  const _Years({required this.s});
+  final BcResult bc;
+  const _Years({required this.bc});
 
   @override
   Widget build(BuildContext context) => SectionCard(
     title: '逐年',
-    trailing: s.yearRows.any((y) => y.partial) ? Text('* 不滿一整年', style: Theme.of(context).textTheme.bodySmall) : null,
+    trailing: bc.years.any((y) => y.partial) ? Text('* 不滿一整年', style: Theme.of(context).textTheme.bodySmall) : null,
     child: Column(
       children: [
-        for (final y in s.yearRows)
+        for (final y in bc.years)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 3),
             child: Row(
               children: [
                 SizedBox(
-                  width: 64,
+                  width: 56,
                   child: Text(
                     y.partial ? '${y.year}*' : '${y.year}',
                     style: const TextStyle(fontWeight: FontWeight.w700),
@@ -401,8 +282,8 @@ class _Years extends StatelessWidget {
                 Expanded(
                   child: Text('組合 ${sp(y.ret)}', style: TextStyle(color: changeColor(context, y.ret))),
                 ),
-                Expanded(child: Text('指數 ${sp(y.bench)}', style: Theme.of(context).textTheme.bodySmall)),
-                Tag(y.beat ? '贏' : '輸', y.beat ? AppColors.up : AppColors.down),
+                Expanded(child: Text('0050 ${sp(y.etf)}', style: Theme.of(context).textTheme.bodySmall)),
+                Expanded(child: Text('大盤 ${sp(y.bench)}', style: Theme.of(context).textTheme.bodySmall)),
               ],
             ),
           ),
@@ -412,18 +293,17 @@ class _Years extends StatelessWidget {
 }
 
 class _Stress extends StatelessWidget {
-  final PerfStats s;
-  const _Stress({required this.s});
+  final BcResult bc;
+  const _Stress({required this.bc});
 
   @override
-  Widget build(BuildContext context) => s.stress.isEmpty
+  Widget build(BuildContext context) => bc.stress.isEmpty
       ? const SizedBox.shrink()
       : SectionCard(
-          title: '大跌期間（壓力測試）',
+          title: '大跌期間',
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              for (final x in s.stress)
+              for (final x in bc.stress)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 3),
                   child: Row(
@@ -436,107 +316,79 @@ class _Stress extends StatelessWidget {
                         flex: 2,
                         child: Text('組合 ${sp(x.ret)}', style: TextStyle(color: changeColor(context, x.ret))),
                       ),
-                      Expanded(flex: 2, child: Text('指數 ${sp(x.bench)}', style: Theme.of(context).textTheme.bodySmall)),
+                      Expanded(flex: 2, child: Text('0050 ${sp(x.etf)}', style: Theme.of(context).textTheme.bodySmall)),
+                      Expanded(flex: 2, child: Text('大盤 ${sp(x.bench)}', style: Theme.of(context).textTheme.bodySmall)),
                     ],
                   ),
                 ),
-              Text('跌得比指數少，就代表分散、低波動、環境判斷有發揮作用。', style: Theme.of(context).textTheme.bodySmall),
             ],
           ),
         );
 }
 
-class _Variants extends StatelessWidget {
-  final LtResult r;
-  const _Variants({required this.r});
+/// 地雷成績單：被排除的地雷之後 6 個月 vs 沒地雷的大型股。
+class _Mines extends StatelessWidget {
+  final BcResult bc;
+  const _Mines({required this.bc});
 
   @override
   Widget build(BuildContext context) {
-    final small = Theme.of(context).textTheme.bodySmall;
+    if (bc.mines.isEmpty) return const SizedBox.shrink();
+    final recent = bc.mines.reversed.take(8).toList();
     return SectionCard(
-      title: '不同設定比較',
+      title: '地雷成績單',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Expanded(flex: 4, child: Text('設定', style: small)),
-              Expanded(flex: 2, child: Text('年化', style: small)),
-              Expanded(flex: 2, child: Text('最大跌幅', style: small)),
-              Expanded(flex: 2, child: Text('每年贏', style: small)),
-            ],
+          Text(
+            '過去 ${bc.mines.length} 次有地雷的檢視日：被排除的大型股之後 6 個月，有 ${pc(bc.mineLagRate)} 的時候比沒地雷的大型股差，'
+            '平均少賺 ${pc(-bc.mineAvgGap, 1)}。去掉地雷是這個組合比 0050 好的主要原因。',
+            style: const TextStyle(fontSize: 13, height: 1.45),
           ),
-          const Divider(height: 10),
-          for (final v in r.variants)
+          const SizedBox(height: 6),
+          for (final m in recent)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
+              padding: const EdgeInsets.symmetric(vertical: 2),
               child: Row(
                 children: [
+                  SizedBox(
+                    width: 92,
+                    child: Text(m.date, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  ),
                   Expanded(
-                    flex: 4,
                     child: Text(
-                      v.label,
-                      style: TextStyle(fontWeight: v.label == '目前設定' ? FontWeight.w800 : FontWeight.w500, fontSize: 13),
+                      '地雷 ${m.mines} 檔 ${sp(m.mineRet)}・其他 ${sp(m.okRet)}',
+                      style: const TextStyle(fontSize: 13),
                     ),
                   ),
-                  Expanded(
-                    flex: 2,
-                    child: Text(sp(v.stats.cagr), style: TextStyle(color: changeColor(context, v.stats.cagr))),
-                  ),
-                  Expanded(flex: 2, child: Text(pc(v.stats.mdd))),
-                  Expanded(flex: 2, child: Text(pc(v.stats.yearlyWin))),
+                  Tag(m.mineRet < m.okRet ? '避開對了' : '避開錯了', m.mineRet < m.okRet ? AppColors.up : AppColors.down),
                 ],
               ),
             ),
-          const SizedBox(height: 4),
-          Text(
-            '目前設定：${r.sim.cfg.size} 檔、每月最多換 ${r.sim.cfg.maxChanges} 檔、${r.sim.cfg.exposure.label}。'
-            '各設定差不多，代表規則穩健、不是剛好調到某個數字；差很多就要小心。',
-            style: small,
-          ),
         ],
       ),
     );
   }
 }
 
-class _Positions extends StatelessWidget {
+/// 舊方法（全市場評分挑 15 檔）的成績，誠實列出來對照。
+class _OldMethod extends StatelessWidget {
   final LtResult r;
-  const _Positions({required this.r});
+  final BcResult bc;
+  const _OldMethod({required this.r, required this.bc});
 
   @override
   Widget build(BuildContext context) {
-    final closed = r.sim.episodes.where((e) => !e.open).toList();
-    if (closed.isEmpty) return const SizedBox.shrink();
-    final rets = closed.map((e) => e.ret).toList()..sort();
-    final median = rets[rets.length ~/ 2];
-    final best = [...closed]..sort((a, b) => b.ret.compareTo(a.ret));
+    final s = r.sim.stats;
+    final h = r.scorecard.of(126);
     return SectionCard(
-      title: '每一筆持股',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          KvRow('買賣過幾次', '${closed.length} 筆'),
-          KvRow('賣出時賺錢', pc(r.sim.stats.posWin)),
-          KvRow('同期間贏指數', pc(r.sim.stats.posBeat)),
-          KvRow('報酬中位數（含息、扣成本）', sp(median)),
-          KvRow('平均持有', '${(r.sim.stats.avgHoldDays / 21).toStringAsFixed(1)} 個月'),
-          const SizedBox(height: 6),
-          Text('賺最多的', style: Theme.of(context).textTheme.bodySmall),
-          Wrap(
-            spacing: 6,
-            runSpacing: 4,
-            children: [
-              for (final e in best.take(5))
-                ActionChip(
-                  label: Text('${e.code} ${sp(e.ret, 0)}'),
-                  onPressed: () =>
-                      Navigator.of(context).push(MaterialPageRoute(builder: (_) => StockReportScreen(code: e.code))),
-                ),
-            ],
-          ),
-        ],
-      ),
+      title: '對照：舊方法（全市場評分挑股）',
+      child: Bullets([
+        '全市場 1,000 多檔一起評分、挑分數最高的 15 檔（加上一半 0050）：年化 ${sp(s.cagr)}、最大跌幅 ${pc(s.mdd)}，'
+            '比這個組合（${sp(bc.full.cagr)}）低。',
+        if (h != null && h.n > 0) '每個月的名單抱 6 個月，贏大盤的次數只有 ${pc(h.winRate)}：分數擅長找出「最差的」，但挑不出「最好的」，而且挑到的多是冷門中小型股。',
+        '所以改成：不預測贏家，只用分數排除地雷，其他照市值持有大型股。',
+      ], BulletKind.info),
     );
   }
 }
@@ -599,58 +451,6 @@ class _Research extends StatelessWidget {
             style: small,
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _Rebalances extends StatelessWidget {
-  final LtResult r;
-  const _Rebalances({required this.r});
-
-  @override
-  Widget build(BuildContext context) {
-    final list = r.sim.rebalances.reversed.where((x) => x.trades.isNotEmpty).take(12).toList();
-    if (list.isEmpty) return const SizedBox.shrink();
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          title: const Text('最近 12 次調整紀錄', style: TextStyle(fontWeight: FontWeight.w800)),
-          childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-          children: [
-            for (final x in list) ...[
-              Align(
-                alignment: Alignment.centerLeft,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 8, bottom: 2),
-                  child: Text(
-                    '${x.date} 檢視（${x.execDate} 成交）・股票 ${pc(x.exposure)}',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-              ),
-              for (final t in x.trades)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 1),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Tag(t.buy ? '買' : '賣', t.buy ? AppColors.up : const Color(0xFF5B8DB8)),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          '${t.code.isEmpty ? '' : '${t.code} ${r.data.stock(t.code)?.name ?? ''}　'}${pc(t.weight, 1)}　${t.reason}',
-                          style: const TextStyle(fontSize: 12.5),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ],
-        ),
       ),
     );
   }

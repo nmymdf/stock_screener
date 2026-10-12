@@ -8,7 +8,7 @@
 //   dart run tool/datapack.dart assemble --dir pack         # 產生 App 用的 lt-/bars-/recent、manifest.json
 //   dart run tool/datapack.dart daily --dir pack            # 每天收盤後：補今年、營收、股利、國際、組裝
 //   dart run tool/datapack.dart research --dir pack         # 用資料包跑長期回測，印出結果
-//   dart run tool/datapack.dart shares --dir pack           # 每月一天的發行股數（算市值用，研究中）
+//   dart run tool/datapack.dart shares --dir pack           # 每月檢視日的發行股數（算市值用）
 //
 // 證交所對太密集的請求會暫時封鎖，每個網站兩次請求之間至少隔 2.5 秒。
 // ignore_for_file: avoid_print
@@ -774,7 +774,7 @@ void assemble(Directory dir, {int recentDays = 30}) {
     first: recent.firstOrNull?.date,
     last: recent.lastOrNull?.date,
   );
-  for (final n in ['revenue.json.gz', 'dividends.json.gz', 'intl.json.gz']) {
+  for (final n in ['revenue.json.gz', 'dividends.json.gz', 'intl.json.gz', 'shares.json.gz']) {
     final file = File('${dir.path}/$n');
     if (!file.existsSync()) continue;
     final b = file.readAsBytesSync();
@@ -810,6 +810,7 @@ Future<void> daily(Fetcher f, Directory dir) async {
   await updateRevenue(f, dir, from: '2013-01');
   await updateDividends(f, dir, now.year, now.year);
   await updateIntl(f, dir);
+  await updateShares(f, dir);
   assemble(dir);
 }
 
@@ -818,10 +819,10 @@ void research(Directory dir) {
   print(report);
 }
 
-// ───────────────────────────── 發行股數（研究中） ─────────────────────────────
+// ───────────────────────────── 發行股數 ─────────────────────────────
 
-/// 每個月 11 日以後第一個交易日（跟長期分析的檢視日同一天）的發行股數，存成 shares.json.gz：
-/// {"v":1,"m":{"2024-05":{"d":"2024-05-13","s":{"2330":25932370067,...}}}}。已經有的月份不重抓（當月除外）。
+/// 每個月 11 日以後第一個交易日（跟長期分析的檢視日同一天）的發行股數，算市值用，存成 shares.json.gz：
+/// {"v":1,"m":{"2024-05":{"d":"2024-05-13","s":{"2330":25932370067,...}}}}。已經有的月份不重抓。
 Future<void> updateShares(Fetcher f, Directory dir, {int fromYear = 2013}) async {
   final file = File('${dir.path}/shares.json.gz');
   final j = file.existsSync() ? decodeGz(file.readAsBytesSync()) : <String, dynamic>{'v': 1, 'm': <String, dynamic>{}};
@@ -834,7 +835,7 @@ Future<void> updateShares(Fetcher f, Directory dir, {int fromYear = 2013}) async
     for (var m = 1; m <= 12; m++) {
       final key = '$y-${m.toString().padLeft(2, '0')}';
       if (key.compareTo(thisMonth) > 0) break;
-      if (months.containsKey(key) && key != thisMonth) continue;
+      if (months.containsKey(key)) continue;
       var got = false;
       for (var d = 11; d <= 25 && !got; d++) {
         final day = DateTime.utc(y, m, d);

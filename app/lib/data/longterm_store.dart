@@ -174,7 +174,7 @@ class LongTermStore extends ChangeNotifier {
 }
 
 LtResult _analyze(String dir, List<PackDay> extra, LtConfig cfg) =>
-    runLtAnalysis(loadPackDir(dir, extraDays: extra), cfg: cfg);
+    runLtAnalysis(loadPackDir(dir, extraDays: extra), cfg: cfg, variants: false);
 
 /// 放在最上層，丟進 isolate 的只有路徑、幾天的資料和設定。
 Future<LtResult> _analyzeInBackground(String dir, List<PackDay> extra, LtConfig cfg) =>

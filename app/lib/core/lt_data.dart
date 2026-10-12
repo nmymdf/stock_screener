@@ -99,6 +99,9 @@ class LtData {
   final DividendData dividends;
   final IntlData intl;
 
+  /// 每月的發行股數（算市值）；舊資料包沒有就是空的。
+  final SharesData shares;
+
   /// 建資料時偵測到的除權息天數：用證交所公布的、用漲跌價差推算的（驗證用）。
   final int eventsFromTwse, eventsFromChange, eventsFromCapital;
 
@@ -114,6 +117,7 @@ class LtData {
     required this.revenue,
     required this.dividends,
     required this.intl,
+    this.shares = const SharesData({}),
   }) : index = {for (var i = 0; i < stocks.length; i++) stocks[i].code: i};
 
   int get nd => dates.length;
@@ -239,7 +243,8 @@ class LtDataBuilder {
     _t = dates.length;
     dates.add(date);
     _taiex.add(taiex ?? (_taiex.isEmpty ? kNaN : _taiex.last));
-    _tri.add(tri ?? kNaN);
+    // 報酬指數偶爾缺一天：沿用前一天（不能混用加權指數，兩者數字差一倍，會變成假的大跌）
+    _tri.add(tri ?? (_tri.isEmpty ? kNaN : _tri.last));
     return true;
   }
 
@@ -391,7 +396,7 @@ class LtDataBuilder {
     return s;
   }
 
-  LtData build({RevenueData? revenue, DividendData? dividends, IntlData? intl}) {
+  LtData build({RevenueData? revenue, DividendData? dividends, IntlData? intl, SharesData? shares}) {
     // 除權息在建構時就要用到；這裡只是一起帶進結果
     final n = _codes.length;
     final nd = dates.length;
@@ -414,6 +419,7 @@ class LtDataBuilder {
       revenue: revenue ?? RevenueData('2013-01'),
       dividends: dividends ?? DividendData(),
       intl: intl ?? const IntlData({}),
+      shares: shares ?? const SharesData({}),
     );
   }
 }

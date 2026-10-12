@@ -111,6 +111,19 @@ List<String> writeSyntheticPack(
   ).writeAsBytesSync(encodeGz(RecentPack(last.sublist(last.length - 30), {for (final c in codes) c: '測試$c'}).toJson()));
   File('${dir.path}/revenue.json.gz').writeAsBytesSync(encodeGz(rev.toJson()));
   File('${dir.path}/dividends.json.gz').writeAsBytesSync(encodeGz(div.toJson()));
+  // 發行股數：每檔固定（1 億～100 億股，分散得很開，市值排名才有大有小），每月 11 日以後第一個平日一筆
+  final shares = {for (final c in codes) c: (1e8 * math.pow(100, rnd.nextDouble())).round()};
+  final months = <String, dynamic>{};
+  for (var y = fromYear; y <= toYear; y++) {
+    for (var m = 1; m <= 12; m++) {
+      var day = DateTime.utc(y, m, 11);
+      while (day.weekday > 5) {
+        day = day.add(const Duration(days: 1));
+      }
+      months['$y-${m.toString().padLeft(2, '0')}'] = {'d': _ymd(day), 's': shares};
+    }
+  }
+  File('${dir.path}/shares.json.gz').writeAsBytesSync(encodeGz({'v': 1, 'm': months}));
   File('${dir.path}/intl.json.gz').writeAsBytesSync(
     encodeGz(
       IntlData({for (final e in intl.entries) e.key: IntlSeries(e.key, 'test', 1, e.value.$1, e.value.$2)}).toJson(),

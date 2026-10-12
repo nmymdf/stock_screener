@@ -144,6 +144,25 @@ void main() {
     expect(DividendData({}, {'1101': []}).byCode, isEmpty);
   });
 
+  test('報酬指數缺一天就沿用前一天，不會混用加權指數（變成假的大跌）', () {
+    final raw = _rawYear();
+    final days = raw.sortedDays;
+    final k = 30;
+    final d = days[k];
+    raw.days[d.date] = PackDay(
+      date: d.date,
+      taiex: d.taiex,
+      tri: null,
+      twse: d.twse,
+      tpex: d.tpex,
+      val: d.val,
+      inst: d.inst,
+    );
+    final data = (LtDataBuilder()..addLtYear(ltYearJson(raw))).build();
+    expect(data.tri[k], data.tri[k - 1]);
+    expect(data.tri[k], isNot(data.taiex[k]));
+  });
+
   test('停牌的日子是 NaN，trAt 往前找最近一次成交；60 日成交值把停牌日算 0', () {
     final b = LtDataBuilder();
     for (final d in _rawYear().sortedDays) {
