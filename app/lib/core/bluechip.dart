@@ -1,9 +1,9 @@
-/// 大型股避雷組合：照市值持有台股最大的公司，只把有「地雷」的拿掉，不預測誰會漲最多。
+/// 大型股避雷組合（v3 的做法，現在只用在「市值排行」分頁和研究對照）：照市值持有台股最大的公司，只把有「地雷」的拿掉。
 ///
 /// 為什麼這樣做（真實資料檢驗過，規則事先定好、沒有回頭調參數）：
 /// - 全市場評分「挑贏家」：2014–2026 每月名單抱 3～6 個月，贏大盤的次數約一半，大型股裡挑反而輸。
 /// - 評分「排除地雷」有用：市值前 30／50／100 大去掉地雷，2014–2019、2020–2026 兩段都比不去掉的好。
-/// - 單一檔（台積電）最多 40%（連 0050 裡的一起算）；不到 1.5% 的小部位改放 0050，不買零碎部位。
+/// - 單一檔（台積電）最多 40%（連 0050 裡的一起算）；不到 3% 的小部位改放 0050，不買零碎部位。
 /// - 實際比重跟目標差不到 1/4 就不調，減少交易。
 library;
 
@@ -12,7 +12,7 @@ import 'dart:typed_data';
 
 import 'factors.dart';
 import 'lt_data.dart';
-import 'portfolio.dart' show HoldingInput, SwapAction, SwapAdvice, SwapRow, coreEtfCodes, ltStressPeriods;
+import 'portfolio.dart' show ltStressPeriods;
 
 class BcConfig {
   /// 從市值前幾大裡挑。
@@ -21,7 +21,7 @@ class BcConfig {
   /// 單一檔最多（直接持有＋0050 裡的）。
   final double maxWeight;
 
-  /// 直接持有的最低比重，不到的改放 0050。
+  /// 直接持有的最低比重，不到的不另外買（列為參考，透過 0050 持有）。
   final double minWeight;
 
   /// 實際比重跟目標差不到這個比例就不調。
@@ -34,7 +34,7 @@ class BcConfig {
   const BcConfig({
     this.universe = 30,
     this.maxWeight = 0.40,
-    this.minWeight = 0.015,
+    this.minWeight = 0.03,
     this.band = 0.25,
     this.etfSize = 50,
     this.buyCost = 0.002425,
@@ -131,12 +131,28 @@ class BcLandmine {
 }
 
 /// 某一天的組合。
+/// 組合裡比重太小、不另外買的公司（透過 0050 間接持有）。
+class BcRef {
+  final int si;
+  final int capRank;
+
+  /// 照市值該有的比重（不到最低比重）。
+  final double capWeight;
+
+  /// 透過 0050 間接持有的比重。
+  final double viaEtf;
+  const BcRef(this.si, this.capRank, this.capWeight, this.viaEtf);
+}
+
 class BcPick {
   final int sample;
   final String date;
 
   /// 直接買的股票（比重由大到小）。
   final List<BcStock> stocks;
+
+  /// 沒有地雷、但比重不到最低比重的（列為參考，透過 0050 持有）。
+  final List<BcRef> references;
 
   /// 放 0050 的比例。
   final double etfWeight;
@@ -146,9 +162,13 @@ class BcPick {
 
   /// 每一檔實際的比重（直接持有＋0050 裡的），回測用。
   final Map<int, double> exposure;
-  const BcPick(this.sample, this.date, this.stocks, this.etfWeight, this.landmines, this.exposure);
+  const BcPick(this.sample, this.date, this.stocks, this.references, this.etfWeight, this.landmines, this.exposure);
 
   BcStock? of(int si) => stocks.where((x) => x.si == si).firstOrNull;
+  BcRef? refOf(int si) => references.where((x) => x.si == si).firstOrNull;
+
+  /// 組合裡的公司（直接買的＋參考的），沒有地雷。
+  bool contains(int si) => of(si) != null || refOf(si) != null;
 }
 
 /// 0050 的成分（市值前 [n] 大、市值加權）。
@@ -200,7 +220,11 @@ BcPick? bcPick(LtData d, ScoreBook book, int s, [BcConfig cfg = const BcConfig()
   final rankOf = {for (var i = 0; i < rank.length; i++) rank[i].$1: i + 1};
   final stocks = [for (final e in keep.entries) BcStock(e.key, rankOf[e.key]!, e.value)]
     ..sort((a, b) => b.weight.compareTo(a.weight));
-  return BcPick(s, d.samples[s].date, stocks, etf, mines, exposure);
+  final refs = [
+    for (final e in j.entries)
+      if (!keep.containsKey(e.key)) BcRef(e.key, rankOf[e.key]!, e.value, etf * (c50[e.key] ?? 0)),
+  ]..sort((a, b) => a.capRank.compareTo(b.capRank));
+  return BcPick(s, d.samples[s].date, stocks, refs, etf, mines, exposure);
 }
 
 /// 某一段期間的成績。
@@ -442,102 +466,4 @@ BcResult? runBlueChip(LtData d, ScoreBook book, [BcConfig cfg = const BcConfig()
     current: current,
     previous: previous,
   );
-}
-
-/// 依手上的持股給建議：在組合裡的續抱、有地雷的建議換掉（一個月最多 [maxSwaps] 檔），
-/// 0050／006208 算組合裡的 0050；不在前 30 大但沒有地雷的不急著換。
-SwapAdvice bcSwapAdvice(
-  List<HoldingInput> holdings,
-  BcPick pick,
-  LtData d,
-  SampleScores live, {
-  int maxSwaps = 3,
-  int universe = 30,
-}) {
-  final total = holdings.fold(0.0, (a, h) => a + h.value);
-  final rows = <SwapRow>[];
-  final replace = <(SwapRow, double)>[];
-  final mineOf = {for (final m in pick.landmines) m.si: m};
-  final heldCodes = {for (final h in holdings) h.code};
-  for (final h in holdings) {
-    final w = total > 0 ? h.value / total : 0.0;
-    if (coreEtfCodes.contains(h.code)) {
-      rows.add(SwapRow(h, null, SwapAction.core, ['市值型 ETF：就是組合裡「0050」那一塊，長期抱著'], w, const []));
-      continue;
-    }
-    final si = d.index[h.code];
-    final x = si == null ? null : live.of(si);
-    if (x == null) {
-      final why = si == null
-          ? (RegExp(r'^[1-9]\d{3}$').hasMatch(h.code) ? '上櫃或沒有上市資料：組合只看上市大型股' : 'ETF、特別股不做個股判斷')
-          : '資料不足（上市未滿一年或近期停止交易）';
-      rows.add(SwapRow(h, null, SwapAction.notRated, [why], w, const []));
-      continue;
-    }
-    final inPick = pick.of(si!);
-    final mine = mineOf[si];
-    final reasons = <String>[];
-    if (inPick != null) {
-      final diff = w - inPick.weight;
-      reasons.add('在大型股避雷組合裡（市值第 ${inPick.capRank} 大），目標約 ${(inPick.weight * 100).toStringAsFixed(1)}%');
-      if (diff.abs() > inPick.weight * 0.5 && total > 0) {
-        reasons.add(
-          diff > 0
-              ? '目前佔 ${(w * 100).toStringAsFixed(1)}%，比目標高不少，新錢先買其他檔'
-              : '目前佔 ${(w * 100).toStringAsFixed(1)}%，比目標低，可以慢慢加',
-        );
-      }
-      rows.add(SwapRow(h, x, SwapAction.keep, reasons, w, const []));
-      continue;
-    }
-    final mr = mine?.reasons ?? landmineReasonsOf(x);
-    if (mr.isNotEmpty) {
-      final row = SwapRow(h, x, SwapAction.replace, ['有地雷：${mr.join('、')}'], w, const []);
-      rows.add(row);
-      replace.add((row, x.pct));
-      continue;
-    }
-    rows.add(SwapRow(h, x, SwapAction.watch, ['不在市值前 $universe 大的組合裡，但沒有地雷：可以續抱，之後再慢慢換成組合裡的股票'], w, const []));
-  }
-  // 最弱的先換，一個月最多 maxSwaps 檔；替代股是組合裡還沒持有、比重最大的
-  replace.sort((a, b) => a.$2.compareTo(b.$2));
-  final cands = [
-    for (final st in pick.stocks)
-      if (!heldCodes.contains(d.stocks[st.si].code) && live.of(st.si) != null) live.of(st.si)!,
-  ];
-  var used = 0;
-  for (var k = 0; k < replace.length; k++) {
-    final (row, _) = replace[k];
-    final idx = rows.indexOf(row);
-    if (k >= maxSwaps) {
-      rows[idx] = SwapRow(
-        row.holding,
-        row.score,
-        SwapAction.watch,
-        [...row.reasons, '本月換股已達 $maxSwaps 檔上限，下個月再處理'],
-        row.weight,
-        const [],
-      );
-      continue;
-    }
-    final c = cands.skip(used).take(3).toList();
-    used = math.min(cands.length, used + 1);
-    rows[idx] = SwapRow(row.holding, row.score, SwapAction.replace, row.reasons, row.weight, c);
-  }
-  final notes = <String>[];
-  final etfNow = holdings.where((h) => coreEtfCodes.contains(h.code)).fold(0.0, (a, h) => a + h.value);
-  if (total > 0 && (etfNow / total - pick.etfWeight).abs() > 0.10) {
-    notes.add(
-      '0050／006208 目前佔 ${(etfNow / total * 100).round()}%，組合建議約 ${(pick.etfWeight * 100).round()}%：不用一次調完，新投入的錢慢慢補。',
-    );
-  }
-  final tsmc = d.index['2330'];
-  if (tsmc != null && total > 0) {
-    final direct = holdings.where((h) => h.code == '2330').fold(0.0, (a, h) => a + h.value) / total;
-    final viaEtf = etfNow / total * 0.5; // 0050 裡台積電大約一半
-    if (direct + viaEtf > 0.45) {
-      notes.add('台積電（含 0050 裡的）大約佔 ${((direct + viaEtf) * 100).round()}%，超過 40% 的上限：新錢先買其他檔。');
-    }
-  }
-  return SwapAdvice(rows, notes, maxSwaps);
 }

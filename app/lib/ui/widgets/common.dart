@@ -5,6 +5,102 @@ library;
 import 'package:flutter/material.dart';
 
 /// 每個選股畫面最上面都要有的提醒：機械化篩選，不是投資建議。
+/// 抬頭常駐的一句話免責聲明。
+const kDisclaimerShort = '僅供參考，不是投資建議；投資盈虧請自行負責';
+
+/// 完整的免責聲明（第一次打開時要同意、工具頁也看得到）。
+const kDisclaimerFull = [
+  ('不是投資建議', '這個 App 依公開資料和固定規則算出參考資訊，不是投資建議，也不是買賣的邀約或保證。'),
+  ('盈虧自負', '要不要買賣、買賣多少，請自己判斷；投資的獲利或虧損由使用者自己承擔，App 作者不負任何責任。'),
+  ('過去不代表未來', '回測是用過去的資料模擬，市場會變，過去的成績不代表未來。'),
+  ('資料可能有誤', '資料來自證交所、公開資訊觀測站等公開來源，可能延遲、缺漏或錯誤；下單前請以券商和官方資料為準。'),
+  ('免費分享', '這是朋友之間免費分享的個人工具，不收費、不提供個別的投資顧問服務。'),
+];
+
+/// 兩欄表格（項目｜說明）。窄螢幕改成上下排的卡片，不會擠成好幾行。
+class InfoTable extends StatelessWidget {
+  final List<(String, String)> rows;
+  final double keyWidth;
+  final String? keyHeader, valueHeader;
+  const InfoTable(this.rows, {super.key, this.keyWidth = 120, this.keyHeader, this.valueHeader});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    const ks = TextStyle(fontSize: 13, fontWeight: FontWeight.w700, height: 1.4);
+    const vs = TextStyle(fontSize: 13, height: 1.45);
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth < 420) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (i, (k, v)) in rows.indexed)
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  decoration: BoxDecoration(
+                    border: i == 0 ? null : Border(top: BorderSide(color: scheme.outlineVariant)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(k, style: ks),
+                      const SizedBox(height: 2),
+                      Text(v, style: vs),
+                    ],
+                  ),
+                ),
+            ],
+          );
+        }
+        TableRow row(String k, String v, {bool head = false, bool shade = false}) => TableRow(
+          decoration: BoxDecoration(
+            color: head || shade ? scheme.surfaceContainerHighest.withValues(alpha: head ? .8 : .35) : null,
+          ),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+              child: Text(k, style: ks),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+              child: Text(v, style: head ? ks : vs),
+            ),
+          ],
+        );
+        return Table(
+          columnWidths: {0: FixedColumnWidth(keyWidth), 1: const FlexColumnWidth()},
+          border: TableBorder(horizontalInside: BorderSide(color: scheme.outlineVariant)),
+          defaultVerticalAlignment: TableCellVerticalAlignment.top,
+          children: [
+            if (keyHeader != null) row(keyHeader!, valueHeader ?? '', head: true),
+            for (final (i, (k, v)) in rows.indexed) row(k, v, shade: i.isOdd),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// 第一次打開的免責聲明：要按「我了解並同意」才能使用。
+Future<bool> showDisclaimerDialog(BuildContext context, {bool requireAccept = true}) async {
+  final ok = await showDialog<bool>(
+    context: context,
+    barrierDismissible: !requireAccept,
+    builder: (context) => AlertDialog(
+      title: const Text('使用前請先閱讀'),
+      content: SizedBox(width: 520, child: SingleChildScrollView(child: InfoTable(kDisclaimerFull, keyWidth: 110))),
+      actions: [
+        if (requireAccept)
+          FilledButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('我了解並同意'))
+        else
+          TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('關閉')),
+      ],
+    ),
+  );
+  return ok ?? false;
+}
+
 class DisclaimerCard extends StatelessWidget {
   final String text;
   const DisclaimerCard({super.key, required this.text});

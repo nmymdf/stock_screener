@@ -73,9 +73,7 @@ class _LtHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final total = r.live.ranked.length;
-    final pick = r.bluechip?.current;
-    final held = pick?.of(s.si);
-    final mine = pick?.landmines.where((m) => m.si == s.si).firstOrNull;
+    final inTrend = r.strategy?.picks.where((p) => p.pick.si == s.si).firstOrNull;
     final reasons = landmineReasonsOf(s);
     final ind = industryOf(s.code);
     final timing = entryTiming(shortReportOf(context, s.code), s);
@@ -99,9 +97,9 @@ class _LtHeader extends StatelessWidget {
                       Text(
                         [
                           ?ind,
-                          if (held != null) '在大型股避雷組合裡（市值第 ${held.capRank} 大，比重 ${pc(held.weight, 1)}）',
-                          if (mine != null) '市值第 ${mine.capRank} 大，但有地雷',
-                          if (held == null && mine == null && reasons.isNotEmpty) '地雷：${reasons.join('、')}',
+                          if (inTrend != null)
+                            inTrend.stoppedOn == null ? '在本月進攻名單裡' : '本月進攻名單（${inTrend.stoppedOn} 跌破 50 日均線已賣出）',
+                          if (reasons.isNotEmpty) '地雷：${reasons.join('、')}',
                         ].join('・'),
                         style: Theme.of(context).textTheme.bodySmall,
                       ),

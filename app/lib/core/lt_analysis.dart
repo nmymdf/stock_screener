@@ -12,6 +12,7 @@ import 'portfolio.dart';
 import 'research.dart';
 import 'scorecard.dart';
 import 'bluechip.dart';
+import 'strategy.dart';
 
 /// 從資料夾讀資料包：lt-YYYY（各年）、recent（最近 30 天）、營收、除權息、國際指標。
 /// [extraDays] 是資料包之後的日子（例如 App 今天直接抓到的收盤），依日期接在最後面。
@@ -91,8 +92,11 @@ class LtResult {
   /// 選股名單成績單：過去每個月的名單抱 3、6 個月有沒有贏大盤（舊方法，回測頁對照用）。
   final Scorecard scorecard;
 
-  /// 大型股避雷組合（主要方法）；舊資料包沒有發行股數時是 null。
+  /// 市值排行／大型股避雷組合（參考）；舊資料包沒有發行股數時是 null。
   final BcResult? bluechip;
+
+  /// 穩健＋進攻策略（主要方法）；舊資料包沒有發行股數時是 null。
+  final StrategyResult? strategy;
   final Duration elapsed;
 
   const LtResult({
@@ -106,6 +110,7 @@ class LtResult {
     required this.preview,
     required this.scorecard,
     this.bluechip,
+    this.strategy,
     required this.elapsed,
   });
 
@@ -133,10 +138,12 @@ LtResult runLtAnalysis(LtData data, {LtConfig cfg = const LtConfig(), bool varia
   if (data.samples.isEmpty) throw StateError('還沒有長期資料，請先下載資料包');
   final engine = FactorEngine(data);
   final book = ScoreBook(data.samples.length, data.stocks.length);
+  final trend = <int, List<TrendPick>>{};
   SampleScores? live;
   for (var s = 0; s < data.samples.length; s++) {
     final sc = engine.score(s);
     book.put(sc);
+    if (!sc.sample.live && sc.sample.date.compareTo('2014-01-01') >= 0) trend[s] = trendPicks(data, sc);
     if (s == data.samples.length - 1) live = sc;
   }
   final exposure = ExposureEngine(data);
@@ -185,6 +192,7 @@ LtResult runLtAnalysis(LtData data, {LtConfig cfg = const LtConfig(), bool varia
     preview: preview,
     scorecard: buildScorecard(data, book, sim),
     bluechip: runBlueChip(data, book),
+    strategy: runStrategy(data, trend),
     elapsed: sw.elapsed,
   );
 }

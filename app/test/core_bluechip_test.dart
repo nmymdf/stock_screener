@@ -34,7 +34,7 @@ void main() {
     expect(data.shares.isEmpty, isFalse);
   });
 
-  test('組合：市值前 30 大去掉地雷，單一檔（含 0050 裡的）不超過 40%，沒有不到 1.5% 的零碎部位', () {
+  test('市值組合（研究用）：前 30 大去掉地雷，單一檔不超過 40%，沒有不到 3% 的零碎部位', () {
     final bc = result.bluechip!;
     final p = bc.current!;
     const cfg = BcConfig();
@@ -74,28 +74,5 @@ void main() {
     for (final m in bc.mines) {
       expect(m.mines, greaterThan(0));
     }
-  });
-
-  test('依我的持股調整：組合裡的續抱、有地雷的換掉（換成組合裡沒有的）、0050 算組合、上櫃不判斷', () {
-    final bc = result.bluechip!;
-    final p = bc.current!;
-    final live = result.live;
-    final inPick = data.stocks[p.stocks.first.si].code;
-    // 找一檔有地雷的（不在前 30 大也可以）
-    final mine = live.ranked.lastWhere((x) => landmineReasonsOf(x).isNotEmpty);
-    final holdings = [
-      HoldingInput(inPick, '', 100000, '2020-01-01'),
-      HoldingInput(mine.code, '', 100000, '2020-01-01'),
-      const HoldingInput('0050', '元大台灣50', 100000, '2020-01-01'),
-      const HoldingInput('6488', '環球晶', 50000, '2020-01-01'),
-    ];
-    final adv = bcSwapAdvice(holdings, p, data, live, maxSwaps: 2);
-    SwapRow row(String c) => adv.rows.firstWhere((r) => r.holding.code == c);
-    expect(row(inPick).action, SwapAction.keep);
-    expect(row(mine.code).action, SwapAction.replace);
-    expect(row(mine.code).candidates.map((c) => c.code), isNot(contains(inPick)));
-    expect(row(mine.code).candidates.every((c) => p.of(c.si) != null), isTrue);
-    expect(row('0050').action, SwapAction.core);
-    expect(row('6488').action, SwapAction.notRated);
   });
 }

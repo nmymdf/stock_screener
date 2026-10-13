@@ -11,6 +11,7 @@ import 'factors.dart';
 import 'lt_analysis.dart';
 import 'lt_data.dart';
 import 'portfolio.dart';
+import 'strategy.dart';
 
 class FactorStat {
   final String name;
@@ -267,6 +268,20 @@ String runPackResearch(String dir) {
         '一減五 ${_p(x.spread)}　IC ${x.ic.toStringAsFixed(3)}（t=${x.icT.toStringAsFixed(1)}，正的 ${(x.icHit * 100).round()}%）',
       );
     }
+  }
+  final st = r.strategy;
+  if (st != null) {
+    sb.writeln('\n── 策略：穩健 70%（0050＋大盤 200 日線）＋進攻 30%（趨勢模板 10 檔＋50 日線停損），扣成本 ──');
+    for (final p in st.periods) {
+      sb.writeln(
+        '${p.label}：${[for (var i = 0; i < p.v.length; i++) '${StrategyResult.names[i]} ${_p(p.v[i].$1)}／${_p(-p.v[i].$2)}'].join('　')}',
+      );
+    }
+    sb.writeln('停損 ${st.stops} 次、大盤進出切換 ${st.marketSwitches} 次');
+    sb.writeln(
+      '最新檢視（${st.reviewDate}，大盤離 200 日線 ${_p(st.reviewGap)}）：'
+      '${st.picks.map((x) => '${data.stocks[x.pick.si].code}${data.stocks[x.pick.si].name}${x.stoppedOn != null ? '（${x.stoppedOn} 停損）' : ''}').join('、')}',
+    );
   }
   final bc = r.bluechip;
   if (bc != null) {

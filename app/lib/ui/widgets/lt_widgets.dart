@@ -1,6 +1,8 @@
 /// 長期分析的共用元件：資料包下載引導、總分與六大類分數、旗標、市場曝險卡、進場時機提示。
 library;
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -340,21 +342,132 @@ StockReport? shortReportOf(BuildContext context, String code) =>
   return (s, b);
 }
 
-/// 走勢小圖：股票（紅漲綠跌）＋大盤（灰），附一年漲跌、比大盤多少、離一年高點多少。
-class TrendSpark extends StatelessWidget {
-  final LtResult r;
-  final int si;
-  final double width, height;
-  const TrendSpark({super.key, required this.r, required this.si, this.width = 260, this.height = 44});
+/// 收盤價和當天漲跌（每日行情；沒有就用長期資料的最新收盤）。
+(double, double?)? closeOf(BuildContext context, String code) {
+  final bars = context.read<HistoryStore>().rawSeriesOf(code);
+  if (bars.isNotEmpty) {
+    final b = bars.last;
+    final ch = b.change;
+    double? pct;
+    if (ch != null && b.close - ch > 0) {
+      pct = ch / (b.close - ch);
+    } else if (bars.length > 1 && bars[bars.length - 2].close > 0) {
+      pct = b.close / bars[bars.length - 2].close - 1;
+    }
+    return (b.close, pct);
+  }
+  final r = context.read<LongTermStore>().result;
+  final si = r?.data.index[code];
+  if (r == null || si == null) return null;
+  final c = r.live.sample.close[si];
+  if (c.isNaN) return null;
+  final st = r.data.stocks[si];
+  final t = r.data.nd - 1;
+  return (c, st.tradedAt(t) && st.tradedAt(t - 1) ? st.trAt(t) / st.trAt(t - 1) - 1 : null);
+}
+
+/// 「收盤 1,234.5 ▲1.2%」
+class CloseText extends StatelessWidget {
+  final String code;
+  const CloseText(this.code, {super.key});
 
   @override
   Widget build(BuildContext context) {
-    final (s, b) = trendOf(r, si);
-    if (s.length < 20) return const SizedBox.shrink();
+    final c = closeOf(context, code);
+    if (c == null) return const SizedBox.shrink();
+    final (close, pct) = c;
+    final col = pct == null ? null : changeColor(context, pct);
+    return Text.rich(
+      TextSpan(
+        children: [
+          TextSpan(text: '收盤 ', style: Theme.of(context).textTheme.bodySmall),
+          TextSpan(
+            text: close >= 1000 ? close.toStringAsFixed(0) : close.toStringAsFixed(close >= 100 ? 1 : 2),
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
+          ),
+          if (pct != null)
+            TextSpan(
+              text: ' ${pct >= 0 ? '▲' : '▼'}${(pct.abs() * 100).toStringAsFixed(1)}%',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: col),
+            ),
+        ],
+      ),
+      maxLines: 1,
+      softWrap: false,
+    );
+  }
+}
+
+/// 一年走勢小圖：收盤價（紅漲綠跌）＋同期大盤（灰）＋成交量柱；附一年漲跌、比大盤、離高點、量增量縮。
+/// 用每日行情（上市、上櫃、ETF 都有）；沒有就用長期資料的含息走勢（沒有量）。
+class PriceTrend extends StatelessWidget {
+  final String code;
+  final double width, height;
+  const PriceTrend(this.code, {super.key, this.width = 260, this.height = 52});
+
+  @override
+  Widget build(BuildContext context) {
+    final r = context.read<LongTermStore>().result;
+    var bars = context.read<HistoryStore>().rawSeriesOf(code);
+    if (bars.length > 250) bars = bars.sublist(bars.length - 250);
+    List<double> price;
+    List<double>? bench;
+    List<double>? vol;
+    if (bars.length >= 20) {
+      final p0 = bars.first.close;
+      price = [for (final b in bars) b.close / p0];
+      vol = [for (final b in bars) b.volumeLots.toDouble()];
+      if (r != null) {
+        final raw = [
+          for (final b in bars)
+            () {
+              final t = r.data.dateIndex(b.date);
+              if (t < 0) return double.nan;
+              final v = r.data.tri[t];
+              return v.isNaN ? r.data.taiex[t] : v;
+            }(),
+        ];
+        final b0 = raw.firstWhere((x) => !x.isNaN, orElse: () => double.nan);
+        if (!b0.isNaN) {
+          var last = b0;
+          bench = [
+            for (final x in raw)
+              () {
+                if (!x.isNaN) last = x;
+                return last / b0;
+              }(),
+          ];
+        }
+      }
+    } else {
+      final si = r?.data.index[code];
+      if (r == null || si == null) return const SizedBox.shrink();
+      final (s, b) = trendOf(r, si);
+      if (s.length < 20) return const SizedBox.shrink();
+      price = s;
+      bench = b;
+    }
     final dark = Theme.of(context).brightness == Brightness.dark;
-    final ret = s.last - 1, bret = b.last - 1;
-    final hi = s.reduce((a, c) => a > c ? a : c);
-    final c = changeColor(context, ret);
+    final ret = price.last - 1;
+    final hi = price.reduce((a, c) => a > c ? a : c);
+    final parts = <String>[
+      '近一年 ${sp(ret, 0)}${bench == null ? '' : '（大盤 ${sp(bench.last - 1, 0)}）'}',
+      '離高點 ${sp(price.last / hi - 1, 0)}',
+    ];
+    if (vol != null && vol.length >= 60) {
+      final recent = vol.sublist(vol.length - 20).reduce((a, b) => a + b) / 20;
+      final year = vol.reduce((a, b) => a + b) / vol.length;
+      if (year > 0) {
+        final x = recent / year - 1;
+        parts.add(
+          '量 ${x > 0.2
+              ? '增'
+              : x < -0.2
+              ? '縮'
+              : '持平'}（近 20 天比一年平均 ${sp(x, 0)}）',
+        );
+      }
+    }
     return Padding(
       padding: const EdgeInsets.only(top: 4),
       child: Wrap(
@@ -366,13 +479,16 @@ class TrendSpark extends StatelessWidget {
             width: width,
             height: height,
             child: CustomPaint(
-              painter: _SparkPainter(s, b, c, dark ? const Color(0xFF6B7785) : const Color(0xFFB0B8C0)),
+              painter: _SparkPainter(
+                price,
+                bench ?? const [],
+                changeColor(context, ret),
+                dark ? const Color(0xFF6B7785) : const Color(0xFFB0B8C0),
+                vol,
+              ),
             ),
           ),
-          Text(
-            '近一年 ${sp(ret, 0)}（大盤 ${sp(bret, 0)}）・離高點 ${sp(s.last / hi - 1, 0)}',
-            style: TextStyle(fontSize: 12, color: Theme.of(context).textTheme.bodySmall?.color),
-          ),
+          Text(parts.join('・'), style: TextStyle(fontSize: 12, color: Theme.of(context).textTheme.bodySmall?.color)),
         ],
       ),
     );
@@ -382,10 +498,15 @@ class TrendSpark extends StatelessWidget {
 class _SparkPainter extends CustomPainter {
   final List<double> s, b;
   final Color color, benchColor;
-  _SparkPainter(this.s, this.b, this.color, this.benchColor);
+
+  /// 成交量（畫在下面 28% 的高度）；null 表示沒有。
+  final List<double>? vol;
+  _SparkPainter(this.s, this.b, this.color, this.benchColor, [this.vol]);
 
   @override
   void paint(Canvas canvas, Size size) {
+    final volH = vol == null ? 0.0 : size.height * 0.28;
+    final ph = size.height - volH - (vol == null ? 0 : 2);
     final all = [...s, ...b];
     var lo = all.reduce((a, c) => a < c ? a : c), hi = all.reduce((a, c) => a > c ? a : c);
     if (hi - lo < 1e-9) hi = lo + 1;
@@ -393,27 +514,42 @@ class _SparkPainter extends CustomPainter {
       final p = Path();
       for (var i = 0; i < v.length; i++) {
         final x = v.length == 1 ? 0.0 : size.width * i / (v.length - 1);
-        final y = size.height - (v[i] - lo) / (hi - lo) * size.height;
+        final y = ph - (v[i] - lo) / (hi - lo) * ph;
         i == 0 ? p.moveTo(x, y) : p.lineTo(x, y);
       }
       return p;
     }
 
+    // 成交量柱
+    final vv = vol;
+    if (vv != null && vv.isNotEmpty) {
+      final vmax = vv.reduce((a, c) => a > c ? a : c);
+      if (vmax > 0) {
+        final bw = size.width / vv.length;
+        final paint = Paint()..color = benchColor.withValues(alpha: .55);
+        for (var i = 0; i < vv.length; i++) {
+          final h = vv[i] / vmax * volH;
+          canvas.drawRect(Rect.fromLTWH(i * bw, size.height - h, math.max(0.8, bw * 0.7), h), paint);
+        }
+      }
+    }
     // 起點的水平虛線（1.0）
-    final y1 = size.height - (1 - lo) / (hi - lo) * size.height;
+    final y1 = ph - (1 - lo) / (hi - lo) * ph;
     final dash = Paint()
       ..color = benchColor.withValues(alpha: 0.6)
       ..strokeWidth = 0.8;
     for (var x = 0.0; x < size.width; x += 6) {
       canvas.drawLine(Offset(x, y1), Offset(x + 3, y1), dash);
     }
-    canvas.drawPath(
-      path(b),
-      Paint()
-        ..color = benchColor
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.2,
-    );
+    if (b.isNotEmpty) {
+      canvas.drawPath(
+        path(b),
+        Paint()
+          ..color = benchColor
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2,
+      );
+    }
     canvas.drawPath(
       path(s),
       Paint()
@@ -424,5 +560,5 @@ class _SparkPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_SparkPainter old) => old.s != s || old.b != b || old.color != color;
+  bool shouldRepaint(_SparkPainter old) => old.s != s || old.b != b || old.color != color || old.vol != vol;
 }

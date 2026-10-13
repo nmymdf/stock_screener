@@ -42,6 +42,7 @@ Future<StockScreenerApp> appIn(
   );
   await tester.runAsync(lt.load);
   await tester.runAsync(lt.refresh);
+  store.disclaimerAccepted = true; // 免責聲明另外測
   return StockScreenerApp(store: store, holdings: h, pack: pack, longTerm: lt);
 }
 
@@ -114,10 +115,15 @@ void main() {
     await tester.pump();
     expect(find.text('先下載長期資料'), findsOneWidget);
 
+    // 側邊選單在矮視窗會捲動，最下面的分頁要先捲出來
+    await tester.ensureVisible(find.text('短線'));
+    await tester.pump();
     await tester.tap(find.text('短線'));
     await tester.pump();
     expect(find.text('開始抓歷史資料'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('工具'));
+    await tester.pump();
     await tester.tap(find.text('工具'));
     await tester.pump();
     await tester.tap(find.text('每日行情（短線、持股、圖表用）'));
@@ -137,6 +143,34 @@ void main() {
     await tester.pumpWidget(await appIn(tester, tmp!, store));
     await tester.pump();
     expect(find.byType(NavigationRail), findsOneWidget);
+    await tester.runAsync(() => tmp.delete(recursive: true));
+  });
+
+  testWidgets('第一次打開要先同意免責聲明，同意後記住；工具頁可以再看', (tester) async {
+    final tmp = await tester.runAsync(() => Directory.systemTemp.createTemp('screener_widget'));
+    final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false);
+    await tester.runAsync(store.load);
+    final app = await appIn(tester, tmp!, store);
+    store.disclaimerAccepted = false;
+    await tester.pumpWidget(app);
+    await tester.pumpAndSettle();
+    expect(find.text('使用前請先閱讀'), findsOneWidget);
+    expect(find.textContaining('投資盈虧請自行負責'), findsWidgets);
+    await tester.tap(find.text('我了解並同意'));
+    await tester.pumpAndSettle();
+    expect(find.text('使用前請先閱讀'), findsNothing);
+    expect(store.disclaimerAccepted, isTrue);
+    await settleIo(tester);
+    await settleIo(tester);
+    final again = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false);
+    await tester.runAsync(again.load);
+    expect(again.disclaimerAccepted, isTrue);
+
+    await tester.tap(find.text('工具'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('免責聲明'));
+    await tester.pumpAndSettle();
+    expect(find.text('關閉'), findsOneWidget);
     await tester.runAsync(() => tmp.delete(recursive: true));
   });
 
@@ -211,19 +245,26 @@ void main() {
     expect(app.longTerm.result, isNotNull);
     await tester.pumpWidget(app);
     await tester.pumpAndSettle();
-    expect(find.textContaining('大型股避雷組合：'), findsOneWidget);
-    expect(find.text('0050 元大台灣50'), findsOneWidget);
-    expect(find.text('被排除的地雷'), findsOneWidget);
-    expect(find.text('最簡單的做法'), findsOneWidget);
-    expect(find.textContaining('市值第 1 大'), findsWidgets);
+    expect(app.longTerm.result!.strategy, isNotNull);
+    expect(find.text('現在的配置'), findsOneWidget);
+    expect(find.text('穩健：0050'), findsOneWidget);
+    expect(find.textContaining('進攻名單（'), findsOneWidget);
+    expect(find.text('回測成績（扣成本）'), findsOneWidget);
+    expect(find.text('規則'), findsOneWidget);
+    expect(find.textContaining('不是投資建議'), findsWidgets);
+
+    await tester.tap(find.text('市值').first);
+    await tester.pumpAndSettle();
+    expect(find.text('市值排行'), findsOneWidget);
+    expect(find.textContaining('市值前 '), findsOneWidget);
 
     await tester.tap(find.text('回測').first);
     await tester.pumpAndSettle();
     expect(find.text('因子研究：分數高的股票之後真的比較好嗎？'), findsOneWidget);
     expect(find.text('結論'), findsOneWidget);
     expect(find.text('逐年'), findsOneWidget);
-    expect(find.textContaining('大型股避雷組合約'), findsOneWidget);
-    expect(find.text('對照：舊方法（全市場評分挑股）'), findsOneWidget);
+    expect(find.text('要注意'), findsOneWidget);
+    expect(find.text('檢驗過、沒採用的方法'), findsOneWidget);
 
     await tester.tap(find.text('市場').first);
     await tester.pumpAndSettle();
@@ -340,8 +381,10 @@ void main() {
     }
     await tester.tap(find.byIcon(Icons.pie_chart_outline).last);
     await tester.pump();
-    expect(find.textContaining('大型股避雷組合：'), findsOneWidget);
+    expect(find.text('現在的配置'), findsOneWidget);
     await tester.tap(find.text('依我的持股調整'));
+    await tester.pump();
+    await tester.tap(find.byIcon(Icons.leaderboard_outlined).last);
     await tester.pump();
     Navigator.of(tester.element(find.byType(HomeShell)))
         .push(MaterialPageRoute(builder: (_) => const StockReportScreen(code: '2330')));

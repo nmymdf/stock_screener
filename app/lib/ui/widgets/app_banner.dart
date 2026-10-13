@@ -15,6 +15,7 @@ import '../../data/longterm_store.dart';
 import '../../logic/engine/market_engine.dart';
 import '../format.dart';
 import '../layout.dart';
+import 'common.dart';
 import 'lt_widgets.dart';
 import 'score_widgets.dart';
 
@@ -47,40 +48,62 @@ class AppBanner extends StatelessWidget {
         ),
         child: SafeArea(
           bottom: false,
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: w >= 760 ? 18 : 12, vertical: 6),
-            child: Row(
-              children: [
-                const _Logo(),
-                const SizedBox(width: 8),
-                const Text(
-                  '台股選股',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white, letterSpacing: 1),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: w >= 760 ? 18 : 12, vertical: 6),
+                child: Row(
+                  children: [
+                    const _Logo(),
+                    const SizedBox(width: 8),
+                    const Text(
+                      '台股選股',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                        letterSpacing: 1,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: gold.withValues(alpha: .7)),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Text(
+                        kAppVersion,
+                        style: TextStyle(fontSize: 11, color: gold, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    if (w >= 760) author else Flexible(child: author),
+                    if (w >= kWideBreakpoint) ...[const SizedBox(width: 18), Expanded(child: _Ticker(store: store))],
+                    if (w >= 760 && w < kWideBreakpoint) const Spacer(),
+                    if (w >= 760) ...[
+                      const SizedBox(width: 10),
+                      _FontControl(store: store, width: w),
+                      const SizedBox(width: 6),
+                      _ThemeToggle(store: store),
+                    ],
+                  ],
                 ),
-                const SizedBox(width: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: gold.withValues(alpha: .7)),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: const Text(
-                    kAppVersion,
-                    style: TextStyle(fontSize: 11, color: gold, fontWeight: FontWeight.w700),
-                  ),
+              ),
+              Container(
+                color: Colors.black.withValues(alpha: .18),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                child: const Text(
+                  kDisclaimerShort,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 11, color: Color(0xFFFFD27A)),
                 ),
-                const SizedBox(width: 10),
-                if (w >= 760) author else Flexible(child: author),
-                if (w >= kWideBreakpoint) ...[const SizedBox(width: 18), Expanded(child: _Ticker(store: store))],
-                if (w >= 760 && w < kWideBreakpoint) const Spacer(),
-                if (w >= 760) ...[
-                  const SizedBox(width: 10),
-                  _FontControl(store: store, width: w),
-                  const SizedBox(width: 6),
-                  _ThemeToggle(store: store),
-                ],
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

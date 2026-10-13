@@ -363,6 +363,8 @@ class _HoldingCard extends StatelessWidget {
                 ),
               ),
               _LtLine(code: h.code),
+              Padding(padding: const EdgeInsets.only(top: 4), child: CloseText(h.code)),
+              PriceTrend(h.code, width: 220, height: 44),
               if (e.addOn != null)
                 Padding(padding: const EdgeInsets.only(top: 4), child: Bullets([e.addOn!], BulletKind.good)),
               const Divider(height: 16),

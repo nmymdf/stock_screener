@@ -3,6 +3,10 @@
 library;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../data/history_store.dart';
+import 'widgets/common.dart';
 
 import 'layout.dart';
 import 'screens/backtest_screen.dart';
@@ -10,6 +14,7 @@ import 'screens/compare_screen.dart';
 import 'screens/holdings_screen.dart';
 import 'screens/industry_screen.dart';
 import 'screens/market_screen.dart';
+import 'screens/marketcap_screen.dart';
 import 'screens/portfolio_screen.dart';
 import 'screens/shortterm_screen.dart';
 import 'screens/tools_screen.dart';
@@ -22,13 +27,14 @@ class HomeShell extends StatefulWidget {
       context.findAncestorStateOfType<_HomeShellState>()?._select(index);
 
   static const portfolio = 0,
-      holdings = 1,
-      compare = 2,
-      market = 3,
-      industry = 4,
-      backtest = 5,
-      tools = 6,
-      shortTerm = 7;
+      marketCap = 1,
+      holdings = 2,
+      compare = 3,
+      market = 4,
+      industry = 5,
+      backtest = 6,
+      tools = 7,
+      shortTerm = 8;
 
   @override
   State<HomeShell> createState() => _HomeShellState();
@@ -36,11 +42,24 @@ class HomeShell extends StatefulWidget {
 
 class _HomeShellState extends State<HomeShell> {
   int _index = 0;
+  bool _asking = false;
+
+  /// 第一次打開（還沒同意過免責聲明）就跳出來。
+  void _askDisclaimer(HistoryStore store) {
+    if (_asking || !store.loaded || store.disclaimerAccepted) return;
+    _asking = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      if (await showDisclaimerDialog(context)) await store.acceptDisclaimer();
+      _asking = false;
+    });
+  }
 
   void _select(int i) => setState(() => _index = i);
 
   static const _tabs = [
     (Icons.pie_chart_outline, Icons.pie_chart, '組合'),
+    (Icons.leaderboard_outlined, Icons.leaderboard, '市值'),
     (Icons.account_balance_wallet_outlined, Icons.account_balance_wallet, '持股'),
     (Icons.compare_arrows_outlined, Icons.compare_arrows, '比較'),
     (Icons.speed_outlined, Icons.speed, '市場'),
@@ -52,17 +71,19 @@ class _HomeShellState extends State<HomeShell> {
 
   Widget _body() => switch (_index) {
     0 => const PortfolioScreen(),
-    1 => const HoldingsScreen(),
-    2 => const CompareScreen(),
-    3 => const MarketScreen(),
-    4 => const IndustryScreen(),
-    5 => const BacktestScreen(),
-    6 => const ToolsScreen(),
+    1 => const MarketCapScreen(),
+    2 => const HoldingsScreen(),
+    3 => const CompareScreen(),
+    4 => const MarketScreen(),
+    5 => const IndustryScreen(),
+    6 => const BacktestScreen(),
+    7 => const ToolsScreen(),
     _ => const ShortTermScreen(),
   };
 
   @override
   Widget build(BuildContext context) {
+    _askDisclaimer(context.watch<HistoryStore>());
     final width = MediaQuery.sizeOf(context).width;
     final wide = width >= 760;
     final body = Center(
@@ -75,16 +96,26 @@ class _HomeShellState extends State<HomeShell> {
       return Scaffold(
         body: Row(
           children: [
-            NavigationRail(
-              selectedIndex: _index,
-              extended: width >= 1280,
-              minExtendedWidth: 168,
-              labelType: width >= 1280 ? NavigationRailLabelType.none : NavigationRailLabelType.all,
-              onDestinationSelected: _select,
-              destinations: [
-                for (final t in _tabs)
-                  NavigationRailDestination(icon: Icon(t.$1), selectedIcon: Icon(t.$2), label: Text(t.$3)),
-              ],
+            // 視窗矮的時候 9 個分頁放不下：讓側邊選單可以捲動
+            LayoutBuilder(
+              builder: (context, c) => SingleChildScrollView(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(minHeight: c.maxHeight),
+                  child: IntrinsicHeight(
+                    child: NavigationRail(
+                      selectedIndex: _index,
+                      extended: width >= 1280,
+                      minExtendedWidth: 168,
+                      labelType: width >= 1280 ? NavigationRailLabelType.none : NavigationRailLabelType.all,
+                      onDestinationSelected: _select,
+                      destinations: [
+                        for (final t in _tabs)
+                          NavigationRailDestination(icon: Icon(t.$1), selectedIcon: Icon(t.$2), label: Text(t.$3)),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
             ),
             const VerticalDivider(width: 1),
             Expanded(child: body),
@@ -97,7 +128,7 @@ class _HomeShellState extends State<HomeShell> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
         onDestinationSelected: _select,
-        // 8 個分頁擠在手機底部：只顯示選到的那個的文字
+        // 9 個分頁擠在手機底部：只顯示選到的那個的文字
         labelBehavior: width < 520 ? NavigationDestinationLabelBehavior.onlyShowSelected : null,
         destinations: [
           for (final t in _tabs) NavigationDestination(icon: Icon(t.$1), selectedIcon: Icon(t.$2), label: t.$3),

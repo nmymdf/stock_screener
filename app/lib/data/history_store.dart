@@ -97,6 +97,9 @@ class HistoryStore extends ChangeNotifier {
   ThemeMode themeMode = ThemeMode.system;
   List<String> compareCodes = const [];
 
+  /// 第一次打開時同意了免責聲明（同意過就不再跳出）。
+  bool disclaimerAccepted = false;
+
   AnalysisResult? analysis;
   bool analyzing = false;
   String? analysisError;
@@ -113,6 +116,7 @@ class HistoryStore extends ChangeNotifier {
         fontScale = (s['fontScale'] as num?)?.toDouble();
         themeMode = ThemeMode.values.firstWhere((m) => m.name == s['themeMode'], orElse: () => ThemeMode.system);
         compareCodes = [for (final x in (s['compareCodes'] as List? ?? const [])) x as String];
+        disclaimerAccepted = s['disclaimerAccepted'] == true;
       }
       for (final j in await _store.readAllDays()) {
         final snap = DaySnapshot.fromJson(j);
@@ -137,7 +141,14 @@ class HistoryStore extends ChangeNotifier {
     'fontScale': ?fontScale,
     'themeMode': themeMode.name,
     'compareCodes': compareCodes,
+    'disclaimerAccepted': disclaimerAccepted,
   });
+
+  Future<void> acceptDisclaimer() async {
+    disclaimerAccepted = true;
+    notifyListeners();
+    await _saveSettings();
+  }
 
   Future<void> setFontScale(double? v) async {
     fontScale = v;
