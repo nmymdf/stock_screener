@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/exposure.dart';
 import '../../core/factors.dart';
+import '../../core/lists.dart';
 import '../../core/lt_analysis.dart';
 import '../../data/datapack_store.dart';
 import '../../data/history_store.dart';
@@ -561,4 +562,60 @@ class _SparkPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_SparkPainter old) => old.s != s || old.b != b || old.color != color || old.vol != vol;
+}
+
+/// 候選名單的過去成績表：抱 3／6／12 個月 × 全部期間、2014–2019、2020 以後。
+class ListStatTable extends StatelessWidget {
+  final ListResult lr;
+  const ListStatTable({super.key, required this.lr});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final small = Theme.of(context).textTheme.bodySmall;
+    TableRow row(List<String> cells, {bool head = false, bool sub = false}) => TableRow(
+      decoration: head
+          ? BoxDecoration(color: scheme.surfaceContainerHighest.withValues(alpha: .8))
+          : (sub ? BoxDecoration(color: scheme.surfaceContainerHighest.withValues(alpha: .35)) : null),
+      children: [
+        for (final c in cells)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 6),
+            child: Text(
+              c,
+              maxLines: 1,
+              softWrap: false,
+              style: TextStyle(fontSize: 13, fontWeight: head || sub ? FontWeight.w800 : FontWeight.w500),
+            ),
+          ),
+      ],
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Table(
+            defaultColumnWidth: const IntrinsicColumnWidth(),
+            border: TableBorder(horizontalInside: BorderSide(color: scheme.outlineVariant)),
+            children: [
+              row(['抱多久', '名單平均', '0050', '賺錢機率', '贏 0050', '最差'], head: true),
+              for (final p in kStatPeriods) ...[
+                if (lr.stats.any((s) => s.period == p)) row([p, '', '', '', '', ''], sub: true),
+                for (final m in kStatMonths)
+                  if (lr.stat(m, p) case final s?)
+                    row(['$m 個月', sp(s.avg), sp(s.etfAvg), pc(s.upRate), pc(s.beatEtf), sp(s.worst, 0)]),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          '${lr.from.substring(0, 7)}～${lr.to.substring(0, 7)}，每月檢視日的名單隔天收盤買進、平均分配，含股息、扣手續費和證交稅；'
+          '0050 用市值前 50 大模擬。平均每次 ${lr.avgCount.toStringAsFixed(1)} 檔。',
+          style: small,
+        ),
+      ],
+    );
+  }
 }

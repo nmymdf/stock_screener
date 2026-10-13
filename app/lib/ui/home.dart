@@ -22,7 +22,7 @@ import 'screens/tools_screen.dart';
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
-  /// 從任何畫面切換到某個分頁（例如組合頁的市場環境點下去跳到市場頁）。
+  /// 從任何畫面切換到某個分頁（例如選股頁的大盤狀態點下去跳到市場頁）。
   static void goTo(BuildContext context, int index) =>
       context.findAncestorStateOfType<_HomeShellState>()?._select(index);
 
@@ -58,7 +58,7 @@ class _HomeShellState extends State<HomeShell> {
   void _select(int i) => setState(() => _index = i);
 
   static const _tabs = [
-    (Icons.pie_chart_outline, Icons.pie_chart, '組合'),
+    (Icons.filter_alt_outlined, Icons.filter_alt, '選股'),
     (Icons.leaderboard_outlined, Icons.leaderboard, '市值'),
     (Icons.account_balance_wallet_outlined, Icons.account_balance_wallet, '持股'),
     (Icons.compare_arrows_outlined, Icons.compare_arrows, '比較'),

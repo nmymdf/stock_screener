@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stock_screener/core/lists.dart';
 import 'package:stock_screener/data/datapack_store.dart';
 import 'package:stock_screener/data/history_store.dart';
 import 'package:stock_screener/data/holdings_store.dart';
@@ -97,7 +98,7 @@ void useTallScreen(WidgetTester tester) {
 }
 
 void main() {
-  testWidgets('沒有資料時：組合頁請你下載長期資料，其他分頁都切得過去', (tester) async {
+  testWidgets('沒有資料時：選股頁請你下載長期資料，其他分頁都切得過去', (tester) async {
     final tmp = await tester.runAsync(() => Directory.systemTemp.createTemp('screener_widget'));
     final store = HistoryStore(store: LocalStore(dir: tmp), useIsolate: false);
     await tester.runAsync(store.load);
@@ -230,7 +231,7 @@ void main() {
     await tester.runAsync(() => tmp.delete(recursive: true));
   });
 
-  testWidgets('長期：組合、回測、市場、個股報告的長期部分都畫得出來', (tester) async {
+  testWidgets('長期：選股（名單、健檢）、回測、市場、個股報告的長期部分都畫得出來', (tester) async {
     useTallScreen(tester);
     final tmp = await tester.runAsync(() => Directory.systemTemp.createTemp('screener_widget'));
     final packDir = await tester.runAsync(() async {
@@ -246,11 +247,18 @@ void main() {
     await tester.pumpWidget(app);
     await tester.pumpAndSettle();
     expect(app.longTerm.result!.strategy, isNotNull);
-    expect(find.text('現在的配置'), findsOneWidget);
-    expect(find.text('穩健：0050'), findsOneWidget);
-    expect(find.textContaining('進攻名單（'), findsOneWidget);
-    expect(find.text('回測成績（扣成本）'), findsOneWidget);
-    expect(find.text('規則'), findsOneWidget);
+    expect(app.longTerm.result!.lists.keys, PickList.values);
+    expect(find.text('大盤狀態'), findsOneWidget);
+    expect(find.textContaining('強勢成長（'), findsOneWidget);
+    expect(find.text('過去成績（每月一份名單）'), findsOneWidget);
+    expect(find.text('入選條件'), findsOneWidget);
+    expect(find.textContaining('%'), findsWidgets);
+    await tester.tap(find.textContaining('穩健存股（'));
+    await tester.pumpAndSettle();
+    expect(find.text('穩健存股'), findsOneWidget);
+    await tester.tap(find.text('我的持股健檢'));
+    await tester.pumpAndSettle();
+    expect(find.text('到持股頁'), findsOneWidget);
     expect(find.textContaining('不是投資建議'), findsWidgets);
 
     await tester.tap(find.text('市值').first);
@@ -262,7 +270,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('因子研究：分數高的股票之後真的比較好嗎？'), findsOneWidget);
     expect(find.text('結論'), findsOneWidget);
-    expect(find.text('逐年'), findsOneWidget);
+    expect(find.text('候選名單：強勢成長'), findsOneWidget);
+    expect(find.text('候選名單：穩健存股'), findsOneWidget);
+    expect(find.text('大盤抱法逐年'), findsOneWidget);
     expect(find.text('要注意'), findsOneWidget);
     expect(find.text('檢驗過、沒採用的方法'), findsOneWidget);
 
@@ -379,10 +389,10 @@ void main() {
       await tester.tap(find.textContaining(mode).first);
       await tester.pump();
     }
-    await tester.tap(find.byIcon(Icons.pie_chart_outline).last);
+    await tester.tap(find.byIcon(Icons.filter_alt_outlined).last);
     await tester.pump();
-    expect(find.text('現在的配置'), findsOneWidget);
-    await tester.tap(find.text('依我的持股調整'));
+    expect(find.text('大盤狀態'), findsOneWidget);
+    await tester.tap(find.text('我的持股健檢'));
     await tester.pump();
     await tester.tap(find.byIcon(Icons.leaderboard_outlined).last);
     await tester.pump();

@@ -9,14 +9,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app_build_info.dart';
-import '../../core/exposure.dart';
 import '../../data/history_store.dart';
 import '../../data/longterm_store.dart';
 import '../../logic/engine/market_engine.dart';
 import '../format.dart';
 import '../layout.dart';
 import 'common.dart';
-import 'lt_widgets.dart';
 import 'score_widgets.dart';
 
 class AppBanner extends StatelessWidget {
@@ -130,7 +128,7 @@ class _Ticker extends StatelessWidget {
       if (withIdx.length >= 2) chg = (last! / taiex[withIdx[withIdx.length - 2]]! - 1) * 100;
     }
     final today = store.analysis?.today;
-    final exposure = context.select<LongTermStore, ExposureState?>((s) => s.result?.exposure);
+    final gap = context.select<LongTermStore, double?>((s) => s.result?.strategy?.marketGapNow);
     final missing = store.missingDates().length;
     final (statusText, statusColor) = store.syncing
         ? ('更新中 ${store.syncDone}/${store.syncTotal}', const Color(0xFFFFC857))
@@ -163,13 +161,16 @@ class _Ticker extends StatelessWidget {
             ],
             sep(),
           ],
-          if (exposure != null) ...[
-            const Text('長期 ', style: label),
+          if (gap != null && !gap.isNaN) ...[
+            const Text('大盤 ', style: label),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(color: exposureColor(exposure.level), borderRadius: BorderRadius.circular(4)),
+              decoration: BoxDecoration(
+                color: gap >= 0 ? const Color(0xFF2E7D32) : const Color(0xFFC98A00),
+                borderRadius: BorderRadius.circular(4),
+              ),
               child: Text(
-                exposure.label,
+                gap >= 0 ? '在年線上' : '跌破年線',
                 style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w700),
               ),
             ),

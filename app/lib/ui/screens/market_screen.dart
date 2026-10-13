@@ -216,7 +216,7 @@ class MarketScreen extends StatelessWidget {
   }
 }
 
-/// 長期組合用的市場環境（每月檢視日調整股票比例），含國際指標。
+/// 長期的市場環境（參考），含國際指標。
 class _LongTermExposure extends StatelessWidget {
   const _LongTermExposure();
 
@@ -226,10 +226,7 @@ class _LongTermExposure extends StatelessWidget {
     final r = lt.result;
     if (r == null) {
       return const Card(
-        child: Padding(
-          padding: EdgeInsets.all(14),
-          child: Text('下載長期資料包之後，這裡會顯示長期組合建議的股票比例，以及費半、Nasdaq、VIX、匯率、美債等國際指標。'),
-        ),
+        child: Padding(padding: EdgeInsets.all(14), child: Text('下載長期資料包之後，這裡會顯示長期的市場環境，以及費半、Nasdaq、VIX、匯率、美債等國際指標。')),
       );
     }
     return ExposureCard(r.exposure, mode: lt.cfg.exposure);

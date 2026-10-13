@@ -9,6 +9,7 @@ import 'dart:math' as math;
 
 import 'factors.dart';
 import 'lt_analysis.dart';
+import 'lists.dart';
 import 'lt_data.dart';
 import 'portfolio.dart';
 import 'strategy.dart';
@@ -282,6 +283,16 @@ String runPackResearch(String dir) {
       '最新檢視（${st.reviewDate}，大盤離 200 日線 ${_p(st.reviewGap)}）：'
       '${st.picks.map((x) => '${data.stocks[x.pick.si].code}${data.stocks[x.pick.si].name}${x.stoppedOn != null ? '（${x.stoppedOn} 停損）' : ''}').join('、')}',
     );
+  }
+  for (final lr in r.lists.values) {
+    sb.writeln('\n── 候選名單：${lr.kind.label}（${lr.from}～${lr.to}，平均每次 ${lr.avgCount.toStringAsFixed(1)} 檔，扣成本）──');
+    for (final x in lr.stats) {
+      sb.writeln(
+        '抱 ${x.months} 個月 ${x.period}（${x.n} 次）：名單 ${_p(x.avg)}　0050 ${_p(x.etfAvg)}　'
+        '賺錢 ${(x.upRate * 100).round()}%　贏 0050 ${(x.beatEtf * 100).round()}%　最差 ${_p(x.worst)}',
+      );
+    }
+    sb.writeln('最新：${lr.now.map((x) => data.stocks[x.si].name).join('、')}');
   }
   final bc = r.bluechip;
   if (bc != null) {

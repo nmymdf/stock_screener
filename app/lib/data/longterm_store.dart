@@ -40,9 +40,6 @@ class LongTermStore extends ChangeNotifier {
   /// 汰弱留強：每月最多建議換幾檔（2～5）。
   int maxSwaps = 3;
 
-  /// 理想組合試算用的投入金額（萬元）；null = 不試算。
-  double? capital;
-
   LtResult? result;
   bool analyzing = false;
   bool loaded = false;
@@ -64,7 +61,6 @@ class LongTermStore extends ChangeNotifier {
               : null,
         );
         maxSwaps = (j['maxSwaps'] as num?)?.toInt() ?? maxSwaps;
-        capital = (j['capital'] as num?)?.toDouble();
       }
     } catch (_) {}
     if (!pack.loaded) await pack.load();
@@ -98,7 +94,6 @@ class LongTermStore extends ChangeNotifier {
     'exposure': cfg.exposure.name,
     'coreWeight': cfg.coreWeight,
     'maxSwaps': maxSwaps,
-    'capital': ?capital,
   });
 
   /// App 自己抓到、比資料包更新的日子（今天收盤後直接從證交所抓的）。
@@ -158,12 +153,6 @@ class LongTermStore extends ChangeNotifier {
     await _save();
     _doneVersion = -1;
     await refresh();
-  }
-
-  Future<void> setCapital(double? v) async {
-    capital = v == null || v <= 0 ? null : v;
-    notifyListeners();
-    await _save();
   }
 
   Future<void> setMaxSwaps(int n) async {

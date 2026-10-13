@@ -117,7 +117,7 @@ class _RecommendScreenState extends State<RecommendScreen> {
           const DisclaimerCard(
             text:
                 '機械化篩選，不是投資建議。分數由技術面、相對強度、量價、市場和產業組成，只看短期走勢；'
-                '長期投資請看「組合」頁（加入營收、獲利、股利、法人）。',
+                '長期選股請看「選股」頁（加入營收、獲利、股利、法人）。',
           ),
         ];
       },

@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/bluechip.dart';
 import '../../core/factors.dart';
+import '../../core/lists.dart' show PickListInfo;
 import '../../core/lt_analysis.dart';
 import '../../core/pack.dart';
 import '../../data/longterm_store.dart';
@@ -73,7 +74,10 @@ class _LtHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final total = r.live.ranked.length;
-    final inTrend = r.strategy?.picks.where((p) => p.pick.si == s.si).firstOrNull;
+    final inLists = [
+      for (final e in r.lists.entries)
+        if (e.value.contains(s.si)) e.key.label,
+    ];
     final reasons = landmineReasonsOf(s);
     final ind = industryOf(s.code);
     final timing = entryTiming(shortReportOf(context, s.code), s);
@@ -97,8 +101,7 @@ class _LtHeader extends StatelessWidget {
                       Text(
                         [
                           ?ind,
-                          if (inTrend != null)
-                            inTrend.stoppedOn == null ? '在本月進攻名單裡' : '本月進攻名單（${inTrend.stoppedOn} 跌破 50 日均線已賣出）',
+                          for (final l in inLists) '在$l名單',
                           if (reasons.isNotEmpty) '地雷：${reasons.join('、')}',
                         ].join('・'),
                         style: Theme.of(context).textTheme.bodySmall,

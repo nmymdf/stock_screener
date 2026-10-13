@@ -1,4 +1,4 @@
-/// 「回測」：穩健＋進攻策略套到 2014 年以來每一天，跟 0050、大盤（含息）比；
+/// 「回測」：兩份候選名單、持股健檢、大盤抱法套到 2014 年以來每一個月，跟 0050、大盤（含息）比；
 /// 另外列出研究過程中檢驗過、沒採用的方法，和各類分數的因子研究。
 library;
 
@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../core/lists.dart';
 import '../../core/lt_analysis.dart';
 import '../../core/research.dart';
 import '../../core/strategy.dart';
@@ -27,7 +28,7 @@ class BacktestScreen extends StatelessWidget {
     return ListView(
       padding: pagePadding(context),
       children: [
-        const PageHeader(icon: Icons.science, title: '回測', subtitle: '穩健＋進攻策略套到過去十幾年，每個月只用當時看得到的資料'),
+        const PageHeader(icon: Icons.science, title: '回測', subtitle: '名單、持股健檢、大盤抱法套到 2014 年以來每一個月，只用當時看得到的資料'),
         const _HowItWorks(),
         PackGate(
           builder: (context, r) {
@@ -36,18 +37,28 @@ class BacktestScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 if (lt.analyzing) const LinearProgressIndicator(),
-                if (st == null)
-                  const SectionCard(title: '需要更新資料包', child: Text('新版資料包加入了每家公司的發行股數，請到「組合」頁更新。'))
+                if (st == null || r.lists.isEmpty)
+                  const SectionCard(title: '需要更新資料包', child: Text('新版資料包加入了每家公司的發行股數，請到「選股」頁更新。'))
                 else ...[
-                  _Verdict(st: st),
+                  _Verdict(r: r, st: st),
                   SplitView(
                     left: [
-                      _NavChart(r: r, st: st),
-                      _Years(st: st),
+                      for (final lr in r.lists.values)
+                        SectionCard(
+                          title: '候選名單：${lr.kind.label}',
+                          child: ListStatTable(lr: lr),
+                        ),
                     ],
                     right: [
+                      _Market(st: st),
+                      _NavChart(r: r, st: st),
+                    ],
+                  ),
+                  SplitView(
+                    left: [_Years(st: st)],
+                    right: [
                       const _Caveats(),
-                      _Tested(r: r),
+                      _Tested(r: r, st: st),
                     ],
                   ),
                 ],
@@ -57,7 +68,7 @@ class BacktestScreen extends StatelessWidget {
           },
         ),
         const SizedBox(height: 8),
-        const DisclaimerCard(text: '回測是用過去的資料模擬，不保證未來。試過很多方法後挑出最好的，多少有運氣成分；投資盈虧請自行負責。'),
+        const DisclaimerCard(text: '回測是用過去的資料模擬，不保證未來；投資盈虧請自行負責。'),
       ],
     );
   }
@@ -67,18 +78,19 @@ class _HowItWorks extends StatelessWidget {
   const _HowItWorks();
 
   static const _steps = [
-    (Icons.event, '每月檢視一次', '每月 11 日以後的第一個交易日收盤後（月營收 10 日前公布完），隔天收盤調整。'),
-    (Icons.shield_outlined, '穩健 70%', '0050。大盤（加權報酬指數）在 200 日均線上就持有，跌破就改放現金（年息 1%）。'),
-    (Icons.trending_up, '進攻 30%', '趨勢模板＋營收成長挑 10 檔強勢股平均配置；不足 10 檔的部分放 0050。'),
-    (Icons.do_not_disturb_on_outlined, '停損', '進攻名單任何一檔收盤跌破 50 日均線，當天賣出放現金，下次檢視再挑。'),
+    (Icons.event, '每月檢視一次', '每月 11 日以後的第一個交易日收盤後（月營收 10 日前公布完），用當時的資料產生名單。'),
+    (Icons.list_alt, '候選名單', '名單上的股票隔天收盤平均買進，分別抱 3、6、12 個月，看賺不賺錢、有沒有贏同期 0050。'),
+    (Icons.health_and_safety_outlined, '持股健檢', '每個月把所有上市股票分成趨勢正常、跌破年線、理由破壞三組，看之後幾個月各組表現。'),
+    (Icons.shield_outlined, '大盤抱法', '大盤（加權報酬指數）在 200 日均線上就抱 0050，跌破就放現金（年息 1%）。'),
     (Icons.receipt_long, '扣掉成本', '買進：手續費 0.1425% ＋ 滑價 0.1%；賣出：再加證交稅 0.3%。配息再投入（總報酬），減資照證交所參考價。'),
     (Icons.visibility_off, '不偷看未來', '每月只用當時看得到的股價、營收、評分；名單包含之後下市的股票。'),
   ];
 
   static const _terms = [
-    ('年化報酬', '平均每年的報酬率（複利）。'),
-    ('最大跌幅', '帳面從最高點最多回落多少：決定你撐不撐得住。'),
-    ('2014–2019／2020 以後', '兩種不同的行情：前一段多半是盤整，後一段是強勢多頭。好的方法兩段都要站得住。'),
+    ('賺錢機率', '每月一份名單，有幾成的名單抱到期是賺錢的。'),
+    ('贏 0050', '有幾成的名單抱到期贏過同期的 0050。'),
+    ('最差', '所有名單裡表現最差的一次。'),
+    ('2014–2019／2020 以後', '兩種不同的行情：前一段多半是盤整，後一段是強勢多頭。'),
     ('0050', '用市值前 50 大、每月調整模擬。'),
   ];
 
@@ -142,20 +154,7 @@ class _HowItWorks extends StatelessWidget {
                   ),
               ],
             ),
-            for (final (k, v) in _terms)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 110,
-                      child: Text(k, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
-                    ),
-                    Expanded(child: Text(v, style: const TextStyle(fontSize: 13, height: 1.4))),
-                  ],
-                ),
-              ),
+            InfoTable(_terms, keyWidth: 110),
           ],
         ),
       ),
@@ -164,8 +163,44 @@ class _HowItWorks extends StatelessWidget {
 }
 
 class _Verdict extends StatelessWidget {
+  final LtResult r;
   final StrategyResult st;
-  const _Verdict({required this.st});
+  const _Verdict({required this.r, required this.st});
+
+  @override
+  Widget build(BuildContext context) {
+    final f = st.full;
+    String line(PickList k, int m) {
+      final s = r.lists[k]?.stat(m, '全部期間');
+      if (s == null) return '—';
+      return '抱 $m 個月平均 ${sp(s.avg)}（0050 ${sp(s.etfAvg)}），賺錢機率 ${pc(s.upRate)}、贏 0050 ${pc(s.beatEtf)}';
+    }
+
+    return SectionCard(
+      title: '結論',
+      trailing: Text('${f.from} ～ ${f.to}', style: Theme.of(context).textTheme.bodySmall),
+      child: InfoTable([
+        ('先說實話', '過去 12 年，一檔上市股票抱一年贏 0050 的機會只有三成多（0050 裡的台積電漲太多）。任何選股名單都很難長期贏 0050，名單的用處是幫你挑、幫你避雷，不是保證贏。'),
+        ('強勢成長', '${line(PickList.strong, 6)}。2020 以後的多頭有用，2014–2019 輸 0050；抱一年大多輸。'),
+        ('穩健存股', '${line(PickList.income, 12)}。報酬比較少，但最穩。'),
+        ('持股健檢', '之後 6 個月平均：2014–2019 趨勢正常 +3.6%、跌破年線 +1.1%、理由破壞 0.0%；2020 以後 +14.5%、+5.4%、+8.8%。看一年就差不多。'),
+        (
+          '大盤抱法',
+          '在年線上抱 0050、跌破放現金：年化 ${sp(f.v[1].$1)}、最大跌幅 ${pc(f.v[1].$2)}；一直抱 0050 ${sp(f.v[3].$1)}、${pc(f.v[3].$2)}。'
+              '報酬差不多，大跌少很多（${st.marketSwitches} 次進出）。',
+        ),
+      ], keyWidth: 84),
+    );
+  }
+}
+
+/// 大盤抱法 vs 一直抱 0050 vs 大盤（含息）。
+class _Market extends StatelessWidget {
+  final StrategyResult st;
+  const _Market({required this.st});
+
+  static const idx = [1, 3, 4];
+  static const names = ['在年線上才抱', '一直抱 0050', '大盤（含息）'];
 
   @override
   Widget build(BuildContext context) {
@@ -180,43 +215,32 @@ class _Verdict extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 6),
             child: Text(
               c,
+              maxLines: 1,
+              softWrap: false,
               style: TextStyle(fontSize: 13, fontWeight: head || strong ? FontWeight.w800 : FontWeight.w500),
             ),
           ),
       ],
     );
     return SectionCard(
-      title: '結論',
-      trailing: Text('${f.from} ～ ${f.to}', style: Theme.of(context).textTheme.bodySmall),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Table(
-              defaultColumnWidth: const IntrinsicColumnWidth(),
-              border: TableBorder(horizontalInside: BorderSide(color: scheme.outlineVariant)),
-              children: [
-                row(['', ...StrategyResult.names], head: true),
-                row([
-                  '${f.from.substring(0, 4)} 年投入 100 萬',
-                  for (var i = 0; i < 5; i++) '${(100 * math.pow(1 + f.v[i].$1, yrs)).toStringAsFixed(0)} 萬',
-                ], strong: true),
-                for (final p in st.periods) ...[
-                  row(['${p.label} 年化', for (final v in p.v) sp(v.$1)]),
-                  row(['　最大跌幅', for (final v in p.v) pc(v.$2)]),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          InfoTable([
-            ('比 0050', '全期每年多 ${sp(f.v[0].$1 - f.v[3].$1)}；最大跌幅 ${pc(f.v[0].$2)}，0050 是 ${pc(f.v[3].$2)}（大約一半）。'),
-            ('兩段期間', '2020 以後明顯多賺；2014–2019 大約跟 0050 打平。優勢主要來自強勢多頭。'),
-            ('穩健部分', '0050＋200 日均線：報酬跟一直持有差不多，大跌少很多（12 年進出 ${st.marketSwitches} 次）。'),
-            ('進攻部分', '強勢股＋50 日均線停損：報酬最高、波動也最大；12 年停損 ${st.stops} 次（大約每週一次）。'),
-          ], keyWidth: 96),
-        ],
+      title: '大盤抱法：0050＋200 日均線',
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Table(
+          defaultColumnWidth: const IntrinsicColumnWidth(),
+          border: TableBorder(horizontalInside: BorderSide(color: scheme.outlineVariant)),
+          children: [
+            row(['', ...names], head: true),
+            row([
+              '${f.from.substring(0, 4)} 年投入 100 萬',
+              for (final i in idx) '${(100 * math.pow(1 + f.v[i].$1, yrs)).toStringAsFixed(0)} 萬',
+            ], strong: true),
+            for (final p in st.periods) ...[
+              row(['${p.label} 年化', for (final i in idx) sp(p.v[i].$1)]),
+              row(['　最大跌幅', for (final i in idx) pc(p.v[i].$2)]),
+            ],
+          ],
+        ),
       ),
     );
   }
@@ -236,12 +260,12 @@ class _NavChart extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => SectionCard(
-    title: '資產走勢（起點 = 1）',
+    title: '大盤抱法走勢（起點 = 1）',
     child: SimpleChart(
-      height: 240,
+      height: 220,
       series: [
-        ChartSeries('穩健＋進攻', _thin(st.navs[0], 420), AppColors.up, width: 2),
-        ChartSeries('0050', _thin(st.navs[3], 420), const Color(0xFFC9A000)),
+        ChartSeries('在年線上才抱', _thin(st.navs[1], 420), const Color(0xFF0B7A6F), width: 2),
+        ChartSeries('一直抱 0050', _thin(st.navs[3], 420), const Color(0xFFC9A000)),
         ChartSeries('大盤（含息）', _thin(st.navs[4], 420), Colors.blueGrey),
       ],
       startLabel: r.data.dates[st.startT],
@@ -259,7 +283,7 @@ class _Years extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return SectionCard(
-      title: '逐年',
+      title: '大盤抱法逐年',
       trailing: st.years.any((y) => y.partial) ? Text('* 不滿一整年', style: Theme.of(context).textTheme.bodySmall) : null,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
@@ -270,7 +294,7 @@ class _Years extends StatelessWidget {
             TableRow(
               decoration: BoxDecoration(color: scheme.surfaceContainerHighest.withValues(alpha: .8)),
               children: [
-                for (final h in ['年份', ...StrategyResult.names])
+                for (final h in ['年份', ..._Market.names])
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 6),
                     child: Text(h, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800)),
@@ -287,10 +311,10 @@ class _Years extends StatelessWidget {
                       style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
-                  for (final v in y.v)
+                  for (final i in _Market.idx)
                     Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
-                      child: Text(sp(v), style: TextStyle(fontSize: 13, color: changeColor(context, v))),
+                      child: Text(sp(y.v[i]), style: TextStyle(fontSize: 13, color: changeColor(context, y.v[i]))),
                     ),
                 ],
               ),
@@ -308,26 +332,33 @@ class _Caveats extends StatelessWidget {
   Widget build(BuildContext context) => const SectionCard(
     title: '要注意',
     child: InfoTable([
-      ('不是聖杯', '前後試了二十幾種方法，這是最好的一個，多少有運氣成分；未來大概會比回測差一些。'),
-      ('靠強勢多頭', '2020 以後的 AI 多頭對強勢股特別有利；2014–2019 這種盤整年，大約只跟 0050 打平。'),
-      ('要準時', '晚一週買進、或改成兩三個月才調整，2014–2019 的成績就明顯變差。'),
-      ('穩健性', '挑 5～15 檔、相對強度門檻、營收門檻、進攻比例 20～40% 都試過：每一種都比 0050 跌得少、2020 以後都多賺；2014–2019 好壞各半。'),
-      ('資料限制', '只有上市股票、只有收盤價（停損用收盤判斷）；沒有完整財報（現金流、負債）。'),
+      ('規則先定好', '名單和健檢的規則都是先定好再檢驗，沒有回頭調數字去配合結果。'),
+      ('靠行情', '強勢股在 2020 以後的 AI 多頭特別有利；盤整年就普通。'),
+      ('名單是平均買', '成績是名單上每一檔平均買的結果；你只挑其中幾檔，結果會差很多。'),
+      ('資料限制', '只有上市股票、只有收盤價；沒有完整財報（現金流、負債）。'),
     ], keyWidth: 96),
   );
 }
 
-/// 研究過程中檢驗過、沒採用的方法（同樣的條件：每天成交 2 億以上、沒有地雷、扣成本）。
+/// 研究過程中檢驗過、沒採用的方法。
 class _Tested extends StatelessWidget {
   final LtResult r;
-  const _Tested({required this.r});
+  final StrategyResult st;
+  const _Tested({required this.r, required this.st});
 
   @override
   Widget build(BuildContext context) {
     final bc = r.bluechip;
+    final f = st.full;
     return SectionCard(
       title: '檢驗過、沒採用的方法',
       child: InfoTable([
+        ('剛轉強', '剛站上年線、營收加速：抱一年平均 +14.4%（0050 +21.9%），贏 0050 只有 37%。'),
+        ('相對便宜', '本益比在自己 5 年低檔、營收沒衰退：抱一年平均 +9.4%（0050 +22.3%），贏 0050 只有 20%。'),
+        (
+          '穩健 70%＋強勢 30% 配比例',
+          '年化 ${sp(f.v[0].$1)}、最大跌幅 ${pc(f.v[0].$2)}，數字最好看；但要每天照規則買賣、照比例配置，多賺的幾乎都在 2020 以後。改成名單由你挑，不再替你配比例。',
+        ),
         ('全市場評分挑 15 檔', '每月名單抱 3～6 個月，贏大盤的次數約一半；挑到的多是冷門中小型股。'),
         if (bc != null)
           ('市值前 30 大去地雷', '年化 ${sp(bc.full.cagr)}（0050 ${sp(bc.full.etfCagr)}）：幾乎就是 0050，不算選股。現在放在「市值」頁當排行參考。'),
@@ -335,8 +366,6 @@ class _Tested extends StatelessWidget {
         ('趨勢價值（O\'Shaughnessy）', '兩段都輸平均股票。'),
         ('低波動', '兩段都輸平均股票。'),
         ('產業動能', '年化約 16%，輸 0050。'),
-        ('自訂長／中／短期規則', '長期高股息、中期成長＋品質、短期營收公告後延續：都沒有穩定贏平均股票。'),
-        ('趨勢模板不停損', '報酬更高，但進攻部分曾經跌 54%；加 50 日均線停損後降到 40%，混合後只剩約 18%。'),
       ], keyWidth: 140),
     );
   }

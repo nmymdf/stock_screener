@@ -12,6 +12,7 @@ import 'portfolio.dart';
 import 'research.dart';
 import 'scorecard.dart';
 import 'bluechip.dart';
+import 'lists.dart';
 import 'strategy.dart';
 
 /// 從資料夾讀資料包：lt-YYYY（各年）、recent（最近 30 天）、營收、除權息、國際指標。
@@ -97,6 +98,9 @@ class LtResult {
 
   /// 穩健＋進攻策略（主要方法）；舊資料包沒有發行股數時是 null。
   final StrategyResult? strategy;
+
+  /// 候選名單（強勢成長、穩健存股）：最新名單＋回測成績。
+  final Map<PickList, ListResult> lists;
   final Duration elapsed;
 
   const LtResult({
@@ -111,6 +115,7 @@ class LtResult {
     required this.scorecard,
     this.bluechip,
     this.strategy,
+    this.lists = const {},
     required this.elapsed,
   });
 
@@ -139,12 +144,30 @@ LtResult runLtAnalysis(LtData data, {LtConfig cfg = const LtConfig(), bool varia
   final engine = FactorEngine(data);
   final book = ScoreBook(data.samples.length, data.stocks.length);
   final trend = <int, List<TrendPick>>{};
+  final listPicks = {for (final k in PickList.values) k: <int, List<int>>{}};
+  final listNow = <PickList, List<LtScore>>{};
+  final withShares = !data.shares.isEmpty;
   SampleScores? live;
   for (var s = 0; s < data.samples.length; s++) {
     final sc = engine.score(s);
     book.put(sc);
-    if (!sc.sample.live && sc.sample.date.compareTo('2014-01-01') >= 0) trend[s] = trendPicks(data, sc);
-    if (s == data.samples.length - 1) live = sc;
+    final last = s == data.samples.length - 1;
+    if (!sc.sample.live && sc.sample.date.compareTo('2014-01-01') >= 0) {
+      trend[s] = trendPicks(data, sc);
+      if (withShares) {
+        for (final k in PickList.values) {
+          listPicks[k]![s] = [for (final x in pickList(k, data, sc, s)) x.si];
+        }
+      }
+    }
+    if (last) {
+      live = sc;
+      if (withShares) {
+        for (final k in PickList.values) {
+          listNow[k] = pickList(k, data, sc, s);
+        }
+      }
+    }
   }
   final exposure = ExposureEngine(data);
   final sim = PortfolioSim(data, book, exposure, cfg);
@@ -193,6 +216,10 @@ LtResult runLtAnalysis(LtData data, {LtConfig cfg = const LtConfig(), bool varia
     scorecard: buildScorecard(data, book, sim),
     bluechip: runBlueChip(data, book),
     strategy: runStrategy(data, trend),
+    lists: {
+      for (final k in PickList.values)
+        if (listNow[k] != null) k: listBacktest(k, data, listPicks[k]!, listNow[k]!),
+    },
     elapsed: sw.elapsed,
   );
 }
