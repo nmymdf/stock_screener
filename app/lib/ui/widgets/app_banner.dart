@@ -301,44 +301,11 @@ class _ThemeToggle extends StatelessWidget {
   }
 }
 
-/// 標誌：圓角方塊裡三根 K 棒。
+/// 標誌：跟 App 圖示同一張圖。
 class _Logo extends StatelessWidget {
   const _Logo();
 
   @override
-  Widget build(BuildContext context) => Container(
-    width: 26,
-    height: 26,
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-        colors: [Color(0xFF14A39A), Color(0xFF0E6B6B)],
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-      ),
-      borderRadius: BorderRadius.circular(6),
-      border: Border.all(color: AppBanner.gold, width: 1),
-    ),
-    child: CustomPaint(painter: _CandlePainter()),
-  );
-}
-
-class _CandlePainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final w = size.width, h = size.height;
-    void candle(double x, double top, double bottom, double wickTop, double wickBottom, Color c) {
-      final p = Paint()
-        ..color = c
-        ..strokeWidth = 1.2;
-      canvas.drawLine(Offset(x, h * wickTop), Offset(x, h * wickBottom), p);
-      canvas.drawRect(Rect.fromLTRB(x - w * .08, h * top, x + w * .08, h * bottom), p);
-    }
-
-    candle(w * .28, .55, .78, .45, .86, Colors.white);
-    candle(w * .5, .38, .66, .28, .74, AppBanner.gold);
-    candle(w * .72, .2, .5, .12, .58, Colors.white);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+  Widget build(BuildContext context) =>
+      Image.asset('assets/app_icon.png', width: 26, height: 26, filterQuality: FilterQuality.medium);
 }
