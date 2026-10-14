@@ -23,6 +23,8 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\stock_screener.exe
 UninstallDisplayName=台股選股
 CloseApplications=yes
+; 裝完通知 Windows 重新整理圖示（不然更新後桌面捷徑會一直顯示快取裡的舊圖示）
+ChangesAssociations=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
@@ -37,4 +39,6 @@ Name: "{autoprograms}\台股選股"; Filename: "{app}\stock_screener.exe"
 Name: "{autodesktop}\台股選股"; Filename: "{app}\stock_screener.exe"; Tasks: desktopicon
 
 [Run]
+; Windows 10／11：重建圖示快取，桌面捷徑馬上換成新圖示
+Filename: "{sys}\ie4uinit.exe"; Parameters: "-show"; Flags: runhidden skipifdoesntexist
 Filename: "{app}\stock_screener.exe"; Description: "立即開啟台股選股"; Flags: nowait postinstall skipifsilent
