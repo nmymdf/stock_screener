@@ -33,10 +33,13 @@ Name: "desktopicon"; Description: "建立桌面捷徑"
 
 [Files]
 Source: "..\..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; 捷徑用獨立的圖示檔：檔名是新的，Windows 圖示快取裡沒有，更新後一定顯示新圖示。
+; 之後再換圖示時，把檔名改掉（例如 icon_v3.ico），才不會又被快取擋住。
+Source: "..\runner\resources\app_icon.ico"; DestDir: "{app}"; DestName: "icon_v2.ico"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\台股選股"; Filename: "{app}\stock_screener.exe"
-Name: "{autodesktop}\台股選股"; Filename: "{app}\stock_screener.exe"; Tasks: desktopicon
+Name: "{autoprograms}\台股選股"; Filename: "{app}\stock_screener.exe"; IconFilename: "{app}\icon_v2.ico"
+Name: "{autodesktop}\台股選股"; Filename: "{app}\stock_screener.exe"; IconFilename: "{app}\icon_v2.ico"; Tasks: desktopicon
 
 [Run]
 ; Windows 10／11：重建圖示快取，桌面捷徑馬上換成新圖示
